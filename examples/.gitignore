@@ -7,4 +7,5 @@ optimistic_transaction_example
 options_file_example
 rocksdb_backup_restore_example
 simple_example
+sst_writer
 transaction_example
