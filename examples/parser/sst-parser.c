@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,8 +15,8 @@
 2. seek to footer start
 3. read magic number
 4. check format version
-5. read metaindex + index handless
-
+5. check checksum type
+6. read metaindex + index handles
 */
 
 struct rocksdb_opts def_opts = {
@@ -23,23 +24,48 @@ struct rocksdb_opts def_opts = {
     .max_varint_len = MAX_VARINT64_LEN,
     .max_block_handle_len = MAX_BLOCK_HANDLE_LEN,
     .footer_len = FOOTER_LEN,
-    .magic = 0x88e241b785f4cff7ull
+    .magic = BLOCK_MAGIC_NUMBER,
 };
-
 
 static void die(const char *message) {
     perror(message);
     exit(1); 
 }
 
+static void diev(const char *fmt, ...) {
+	va_list argp;
+	va_start(argp, fmt);
+	vfprintf(stderr, fmt, argp);
+	va_end(argp);
+	fputc('\n', stderr);
+	exit(1);
+}
+
+static void print_footer(struct footer *footer) {
+    if (footer == NULL)
+        return;
+
+    printf("Checksum type: %u\n", footer->checksum);
+    printf("Format version: %u\n", footer->version);
+    printf("Magic number: %lx\n", footer->magic_number);
+}
+
+static void print_block_handle(struct block_handle *handle) {
+    if (handle == NULL)
+        return;
+
+    printf("Offset: %lx\n", handle->offset);
+    printf("Size: %lx\n", handle->size);
+}
+
 int main(int argc, char **argv) {
     int sst_fd;
     char *filename;
-    char footer[def_opts.footer_len];
-    uint64_t magic_num;
-    uint32_t version;
+    struct footer footer;
+    struct block_handle metaindex, index;
+    const uint8_t *handle;
 
-    printf("footer size: %d\n", sizeof(struct footer));
+    // printf("footer size: %ld\n", sizeof(struct footer));
 
     if (argc != 2) {
         printf("usage: ./sst-parser <sst-file>\n");
@@ -52,26 +78,41 @@ int main(int argc, char **argv) {
     if (sst_fd == -1)
         die("open() failed");
 
-    if (lseek(sst_fd, -1 * (int) def_opts.footer_len, SEEK_END) == -1)
+    if (lseek(sst_fd, -1 * sizeof(struct footer), SEEK_END) == -1)
         die("lseek() failed");
 
     // printf("Curent offset: %ld\n", lseek(sst_fd, 0, SEEK_CUR));
 
-    if (read(sst_fd, footer, def_opts.footer_len) != def_opts.footer_len)
+    // Assuming little endian and non-legacy format
+    // TODO: Cross-format parsing - first read magic number, then parse
+    if (read(sst_fd, &footer, sizeof(footer)) != sizeof(footer))
         die("read() failed");
 
-    // assuming little endian
-    memcpy(&magic_num, &footer[def_opts.footer_len - def_opts.magic_num_len], def_opts.magic_num_len);
-    printf("Parsed magic number: %lx\nGiven magic number: %lx\n", magic_num, def_opts.magic);
+    if (footer.magic_number != def_opts.magic)
+        diev("Magic numbers don't match: %lx (parsed) and %lx (given)", footer.magic_number, def_opts.magic);
 
-    if (magic_num != def_opts.magic) {
-        fprintf(stderr, "magic numbers don't match: %lx (parsed) and %lx (given)\n", magic_num, def_opts.magic);
-        exit(1);
-    }
+    // Assuming non-legacy format
+    if (!valid_format_version(footer.version) && footer.version != kLegacyFormatVersion)
+        diev("Invalid format version: %u", footer.version);
 
-    // assuming little endian
-    memcpy(&version, &footer[def_opts.footer_len - def_opts.magic_num_len - sizeof(uint32_t)], sizeof(uint32_t));
-    printf("Parsed version number: %u\n", version);
+    if (!valid_checksum_type(footer.checksum))
+        diev("Invalid checksum type: %u", footer.checksum);
 
+    handle = decode_varint64(footer.block_handles, &metaindex.offset, MAX_VARINT64_LEN);
+    handle = decode_varint64(handle, &metaindex.size, MAX_VARINT64_LEN);
+    if (!handle)
+        diev("Parsing metaindex handle failed");
+
+    handle = decode_varint64(handle, &index.offset, MAX_VARINT64_LEN);
+    handle = decode_varint64(handle, &index.size, MAX_VARINT64_LEN);
+    if (!handle)
+        diev("Parsing index handle failed");
+
+    printf("Footer:\n");
+    print_footer(&footer);
+    printf("\nMetaindex handle:\n");
+    print_block_handle(&metaindex);
+    printf("\nIndex handle:\n");
+    print_block_handle(&index);
 
 }
