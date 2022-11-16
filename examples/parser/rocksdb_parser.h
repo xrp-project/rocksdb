@@ -13,6 +13,8 @@
 #define FOOTER_LEN (CHECKSUM_LEN + 2 * MAX_BLOCK_HANDLE_LEN + VERSION_LEN + MAGIC_NUM_LEN)
 #define LEGACY_FOOTER_LEN (2 * MAX_BLOCK_HANDLE_LEN + MAGIC_NUM_LEN)
 
+#define MAX_VARINT32_LEN 5
+
 // Magic numbers
 #define BLOCK_MAGIC_NUMBER 0x88e241b785f4cff7ull // kBlockBasedTableMagicNumber
 #define LEGACY_BLOCK_MAGIC_NUMBER 0xdb4775248b80fb57ull // kLegacyBlockBasedTableMagicNumber
@@ -56,6 +58,29 @@ enum datablock_index_type {
     kDataBlockBinaryAndHash = 1,  // additional hash index
 };
 
+// Internal key footer - contains sequence number and type packed together
+#define kNumInternalBytes 8
+
+// Value types encoded as the last component of internal keys
+// Incomplete list, see db/dbformat.h
+enum value_type {
+    kTypeDeletion = 0x0,
+    kTypeValue = 0x1,
+    kTypeMerge = 0x2,
+    kTypeDeletionWithTimestamp = 0x14,
+    kTypeRangeDeletion = 0xF,
+    kTypeMaxValid,
+    kMaxValue = 0x7F
+};
+
+static inline void unpack_sequence_and_type(uint64_t packed, uint64_t *seq, int8_t *t) {
+    if (seq)
+        *seq = packed >> 8;
+
+    if (t)
+        *t = packed & 0xff;
+}
+
 struct rocksdb_opts {
     uint32_t magic_num_len; // kMagicNumberLengthByte = 8
     uint32_t max_varint_len; // kMaxVarint64Length = 10
@@ -92,5 +117,17 @@ struct legacy_footer {
     uint8_t block_handles[2 * MAX_BLOCK_HANDLE_LEN];
     uint64_t magic_number;
 } __attribute__((packed));
+
+
+// Metaindex block
+#define kRangeDelBlockName "rocksdb.range_del"
+#define kPropertiesBlockName "rocksdb.properties"
+#define kPropertiesBlockOldName "rocksdb.stats"
+#define kCompressionDictBlockName "rocksdb.compression_dict"
+
+// Block Based Table Property Names - Taken from struct BlockBasedTablePropertyName
+#define kIndexTypeProperty "rocksdb.block.based.table.index.type"
+#define kWholeKeyFilteringProperty "rocksdb.block.based.table.whole.key.filtering"
+#define kPrefixFilteringProperty "rocksdb.block.based.table.prefix.filtering"
 
 #endif // _PARSER_ROCKSDB_PARSER_H_
