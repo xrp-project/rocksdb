@@ -5,13 +5,15 @@
 
 // Footer member sizes
 #define CHECKSUM_LEN 1
-#define MAX_VARINT64_LEN 10
+#define MAX_VARINT64_LEN 10 // kMaxVarint64Length = 10
 #define VERSION_LEN 4
-#define MAGIC_NUM_LEN 8
-#define MAX_BLOCK_HANDLE_LEN (2 * MAX_VARINT64_LEN)
+#define MAGIC_NUM_LEN 8 // kMagicNumberLengthByte = 8
+#define MAX_BLOCK_HANDLE_LEN (2 * MAX_VARINT64_LEN) // kMaxEncodedLength = 2 * kMaxVarint64Length
 
+// kNewVersionsEncodedLength = 1 + 2 * BlockHandle::kMaxEncodedLength + 4 + kMagicNumberLengthByte. Version 1+
 #define FOOTER_LEN (CHECKSUM_LEN + 2 * MAX_BLOCK_HANDLE_LEN + VERSION_LEN + MAGIC_NUM_LEN)
 #define LEGACY_FOOTER_LEN (2 * MAX_BLOCK_HANDLE_LEN + MAGIC_NUM_LEN)
+#define MAX_FOOTER_LEN FOOTER_LEN // new footer > legacy footer
 
 #define MAX_VARINT32_LEN 5
 
@@ -34,6 +36,8 @@ enum checksum_type {
 static inline int valid_checksum_type(uint8_t checksum_type) {
     return checksum_type >= kNoChecksum && checksum_type <= kXXH3;
 }
+
+#define kLegacyChecksumType kCRC32c
 
 // Format version parsing
 #define kLegacyFormatVersion 0
@@ -81,43 +85,32 @@ static inline void unpack_sequence_and_type(uint64_t packed, uint64_t *seq, int8
         *t = packed & 0xff;
 }
 
-struct rocksdb_opts {
-    uint32_t magic_num_len; // kMagicNumberLengthByte = 8
-    uint32_t max_varint_len; // kMaxVarint64Length = 10
-    uint32_t max_block_handle_len; // kMaxEncodedLength = 2 * kMaxVarint64Length
-    uint32_t footer_len; // kNewVersionsEncodedLength = 1 + 2 * BlockHandle::kMaxEncodedLength + 4 + kMagicNumberLengthByte. Version 1+
-    uint64_t magic; // kBlockBasedTableMagicNumber = 0x88e241b785f4cff7ull;
-};
-
 struct block_handle {
     uint64_t offset;
     uint64_t size;
 };
 
 /*
+ * Footer structure:
+ *
  * Version 1+:
  *   Checksum: one byte
  *   Block handles (metaindex + index): kMaxEncodedLength = 2 * kMaxVarint64Length; kMaxVarint64Length = 10
  *   Version: 4 bytes
  *   Magic number: kMagicNumberLengthByte = 8
- */
-struct footer {
-    uint8_t checksum;
-    uint8_t block_handles[2 * MAX_BLOCK_HANDLE_LEN];
-    uint32_t version;
-    uint64_t magic_number;
-} __attribute__((packed));
-
-/*
+ *
  * Version 0:
  *   Block handles (metaindex + index): kMaxEncodedLength = 2 * kMaxVarint64Length; kMaxVarint64Length = 10
  *   Magic number: kMagicNumberLengthByte = 8
+ *   Has default checksum value (kCRC32c)
  */
-struct legacy_footer {
-    uint8_t block_handles[2 * MAX_BLOCK_HANDLE_LEN];
+struct footer {
+    uint8_t checksum;
+    struct block_handle metaindex_handle;
+    struct block_handle index_handle;
+    uint32_t version;
     uint64_t magic_number;
-} __attribute__((packed));
-
+};
 
 // Metaindex block
 #define kRangeDelBlockName "rocksdb.range_del"

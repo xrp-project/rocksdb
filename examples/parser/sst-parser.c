@@ -20,14 +20,6 @@
 6. read metaindex + index handles
 */
 
-struct rocksdb_opts def_opts = {
-    .magic_num_len = MAGIC_NUM_LEN,
-    .max_varint_len = MAX_VARINT64_LEN,
-    .max_block_handle_len = MAX_BLOCK_HANDLE_LEN,
-    .footer_len = FOOTER_LEN,
-    .magic = BLOCK_MAGIC_NUMBER,
-};
-
 static void die(const char *message) {
     perror(message);
     exit(1); 
@@ -42,15 +34,6 @@ static void diev(const char *fmt, ...) {
 	exit(1);
 }
 
-static void print_footer(struct footer *footer) {
-    if (footer == NULL)
-        return;
-
-    printf("Checksum type: %u\n", footer->checksum);
-    printf("Format version: %u\n", footer->version);
-    printf("Magic number: %lx\n", footer->magic_number);
-}
-
 static void print_block_handle(struct block_handle *handle) {
     if (handle == NULL)
         return;
@@ -59,16 +42,78 @@ static void print_block_handle(struct block_handle *handle) {
     printf("Size: %lx\n", handle->size);
 }
 
+static void print_footer(struct footer *footer) {
+    if (footer == NULL)
+        return;
+
+    printf("Footer:\n");
+    printf("  Checksum type: %u\n", footer->checksum);
+    printf("  Format version: %u\n", footer->version);
+    printf("  Magic number: %lx\n", footer->magic_number);
+    printf("\nMetaindex handle:\n");
+    print_block_handle(&footer->metaindex_handle);
+    printf("\nIndex handle:\n");
+    print_block_handle(&footer->index_handle);
+}
+
+static void parse_footer(int sst_fd, struct footer *footer) {
+    uint8_t footer_arr[MAX_FOOTER_LEN];
+    const uint8_t *handle, *footer_iter = footer_arr;
+
+    if (footer == NULL)
+        diev("NULL footer pointer passed to parse_footer()");
+
+    // Assuming little endian
+    if (read(sst_fd, footer_arr, sizeof(footer_arr)) != sizeof(footer_arr))
+        die("read() failed");
+
+    // read magic number
+    footer_iter += sizeof(footer_arr) - MAGIC_NUM_LEN;
+    footer->magic_number = *(uint64_t *)footer_iter;
+
+    if (footer->magic_number == BLOCK_MAGIC_NUMBER) {
+
+        // read version
+        footer_iter -= VERSION_LEN;
+        footer->version = *(uint32_t *)footer_iter;
+
+        if (!valid_format_version(footer->version))
+            diev("Invalid format version: %u", footer->version);
+
+        // read checksum type
+        footer->checksum = *(uint8_t *)footer_arr;
+        if (!valid_checksum_type(footer->checksum))
+            diev("Invalid checksum type: %u", footer->checksum);
+
+        // set pointer to start of block handles
+        footer_iter = footer_arr + CHECKSUM_LEN;
+    } else if (footer->magic_number == LEGACY_BLOCK_MAGIC_NUMBER) {
+        footer->version = kLegacyFormatVersion;
+        footer->checksum = kLegacyChecksumType;
+
+        // set pointer to start of block handles
+        footer_iter -= 2 * MAX_BLOCK_HANDLE_LEN;
+    } else {
+        diev("Invalid magic number: %lx\n", footer->magic_number);
+    }
+
+    handle = decode_varint64(footer_iter, &footer->metaindex_handle.offset, MAX_VARINT64_LEN);
+    handle = decode_varint64(handle, &footer->metaindex_handle.size, MAX_VARINT64_LEN);
+    if (!handle)
+        diev("Parsing metaindex handle failed");
+
+    handle = decode_varint64(handle, &footer->index_handle.offset, MAX_VARINT64_LEN);
+    handle = decode_varint64(handle, &footer->index_handle.size, MAX_VARINT64_LEN);
+    if (!handle)
+        diev("Parsing index handle failed");
+}
+
 int main(int argc, char **argv) {
     int sst_fd;
     char *filename, *key;
     uint8_t *index_block, *data_block;
     const uint8_t *index_iter, *data_iter;
-    struct footer footer;
-    struct block_handle metaindex, index, data_block_handle;
-    const uint8_t *handle;
-
-    // printf("footer size: %ld\n", sizeof(struct footer));
+    struct block_handle data_block_handle;
 
     if (argc != 3) {
         printf("usage: ./sst-parser <sst-file> <key>\n");
@@ -77,47 +122,19 @@ int main(int argc, char **argv) {
 
     filename = argv[1];
     key = argv[2];
-    sst_fd = open(filename, O_RDONLY);
 
-    if (sst_fd == -1)
+    if ((sst_fd = open(filename, O_RDONLY)) == -1)
         die("open() failed");
 
-    if (lseek(sst_fd, -1 * sizeof(struct footer), SEEK_END) == -1)
+    if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
         die("lseek() failed");
 
     // printf("Curent offset: %ld\n", lseek(sst_fd, 0, SEEK_CUR));
 
-    // Assuming little endian and non-legacy format
-    // TODO: Cross-format parsing - first read magic number, then parse
-    if (read(sst_fd, &footer, sizeof(footer)) != sizeof(footer))
-        die("read() failed");
+    struct footer footer;
+    parse_footer(sst_fd, &footer);
 
-    if (footer.magic_number != def_opts.magic)
-        diev("Magic numbers don't match: %lx (parsed) and %lx (given)", footer.magic_number, def_opts.magic);
-
-    // Assuming non-legacy format
-    if (!valid_format_version(footer.version) && footer.version != kLegacyFormatVersion)
-        diev("Invalid format version: %u", footer.version);
-
-    if (!valid_checksum_type(footer.checksum))
-        diev("Invalid checksum type: %u", footer.checksum);
-
-    handle = decode_varint64(footer.block_handles, &metaindex.offset, MAX_VARINT64_LEN);
-    handle = decode_varint64(handle, &metaindex.size, MAX_VARINT64_LEN);
-    if (!handle)
-        diev("Parsing metaindex handle failed");
-
-    handle = decode_varint64(handle, &index.offset, MAX_VARINT64_LEN);
-    handle = decode_varint64(handle, &index.size, MAX_VARINT64_LEN);
-    if (!handle)
-        diev("Parsing index handle failed");
-
-    printf("Footer:\n");
     print_footer(&footer);
-    printf("\nMetaindex handle:\n");
-    print_block_handle(&metaindex);
-    printf("\nIndex handle:\n");
-    print_block_handle(&index);
 
     /* meta index uses kDataBlockBinarySearch, delta encoding = True, value delta = False
        See block_builder.cc
@@ -128,27 +145,27 @@ int main(int argc, char **argv) {
        (block type + 4 byte checksum)
     */
 
-    if (lseek(sst_fd, index.offset, SEEK_SET) == -1)
+    if (lseek(sst_fd, footer.index_handle.offset, SEEK_SET) == -1)
         die("lseek() failed");
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
     // index_type = kBinarySearch and index_key_is_user_key
 
-    if ((index_block = malloc(index.size)) == NULL)
+    if ((index_block = malloc(footer.index_handle.size)) == NULL)
         die("malloc() failed");
 
     index_iter = index_block;
-    if (read(sst_fd, index_block, index.size) != index.size)
+    if (read(sst_fd, index_block, footer.index_handle.size) != footer.index_handle.size)
         die("read() failed");
 
     uint8_t index_type;
     uint32_t num_restarts;
-    uint32_t *block_footer = (uint32_t *)(index_block + index.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
+    uint32_t *block_footer = (uint32_t *)(index_block + footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
 
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
     printf("\nReading index block...\n");
     printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
-    uint32_t index_end = index.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+    uint32_t index_end = footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
     uint8_t found = 0;
 
@@ -220,8 +237,6 @@ int main(int argc, char **argv) {
         // Remove internal footer from key
         non_shared_size -= kNumInternalBytes;
 
-        //printf("%u, %u, %u\n", shared_size, non_shared_size, value_length);
-
         if ((data_key = malloc(shared_size + non_shared_size + 1)) == NULL)
             die("malloc() failed");
 
@@ -236,12 +251,7 @@ int main(int argc, char **argv) {
         memcpy(data_key + shared_size, data_iter, non_shared_size);
         data_key[shared_size + non_shared_size] = '\0';
 
-        /* printf("%s\n", data_key);
-        printf("%ld\n", strlen(data_key));
-        printf("%d\n", strncmp(key, (const char *)data_key, shared_size + non_shared_size)); */
-
         prev_data_key = data_key;
-        
         data_iter += non_shared_size;
 
         // key != data key, move on
@@ -262,7 +272,7 @@ int main(int argc, char **argv) {
         if (vt != kTypeValue) {
             found = 1;
             printf("Key exists, but is no longer valid. State: %x\n", vt);
-            break;
+            goto cleanup;
         }
 
         if ((value = malloc(value_length + 1)) == NULL)
@@ -280,9 +290,10 @@ int main(int argc, char **argv) {
     else
         printf("Key found! %s, %s\n", key, value);
 
+cleanup:
+
     free(prev_data_key);
     free(value);
-
     free(data_block);
 
     close(sst_fd);
