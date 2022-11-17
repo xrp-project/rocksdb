@@ -11,15 +11,6 @@
 #include "rocksdb_parser.h"
 #include "varint.h"
 
-/*
-1. open file + get file size
-2. seek to footer start
-3. read magic number
-4. check format version
-5. check checksum type
-6. read metaindex + index handles
-*/
-
 static void die(const char *message) {
     perror(message);
     exit(1); 
@@ -129,14 +120,13 @@ int main(int argc, char **argv) {
     if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
         die("lseek() failed");
 
-    // printf("Curent offset: %ld\n", lseek(sst_fd, 0, SEEK_CUR));
-
     struct footer footer;
     parse_footer(sst_fd, &footer);
 
     print_footer(&footer);
 
-    /* meta index uses kDataBlockBinarySearch, delta encoding = True, value delta = False
+    /* 
+       meta index uses kDataBlockBinarySearch, delta encoding = True, value delta = False
        See block_builder.cc
        If not value delta encoded, has <shared><non_shared><value_size>, then key,
        then block handle. If key is delta-encoded (true by default), next key starts at first
@@ -196,17 +186,17 @@ int main(int argc, char **argv) {
         break;
     }
 
+    free(index_block);
+
     if (found == 0)
         diev("Data block for key not found");
 
     printf("Data block for key %s: Offset: %lx Size: %lx\n", key, data_block_handle.offset, data_block_handle.size);
 
-    free(index_block);
-
+    // Parse data block - keys delta encoded
     if (lseek(sst_fd, data_block_handle.offset, SEEK_SET) == -1)
         die("lseek() failed");
 
-    // Parse data block - keys delta encoded
     if ((data_block = malloc(data_block_handle.size)) == NULL)
         die("malloc() failed");
 
