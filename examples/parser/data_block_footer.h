@@ -10,6 +10,8 @@
   (BLOCK_FOOTER_CHECKSUM_LEN + BLOCK_FOOTER_TYPE_LEN + \
    BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
 
+#define kBlockTrailerSize BLOCK_FOOTER_TYPE_LEN + BLOCK_FOOTER_CHECKSUM_LEN
+
 #define kDataBlockIndexTypeBitShift 31
 
 #define kMaxNumRestarts ((uint32_t)(1u << kDataBlockIndexTypeBitShift) - 1u)

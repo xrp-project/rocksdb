@@ -105,7 +105,9 @@ static void parse_index_block(int sst_fd,
 
     uint8_t *index_block, index_type;
     const uint8_t *index_iter;
-    uint32_t num_restarts, *block_footer;
+    uint32_t num_restarts, index_end, *block_footer;
+    char *index_key, *prev_index_key = NULL;
+    struct block_handle tmp_data_handle, prev_data_handle;
 
     if (!index_block_handle || !key || !data_block_handle || !found)
         diev("NULL pointer passed to parse_index_block()");
@@ -130,37 +132,64 @@ static void parse_index_block(int sst_fd,
 
     printf("\nReading index block...\n");
     printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
-    uint32_t index_end = index_block_handle->size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+    index_end = index_block_handle->size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
     *found = 0;
 
     while (index_iter < index_block + index_end) {
         uint32_t shared_size, non_shared_size;
-        const unsigned char *data_key;
+
         index_iter = decode_varint32(index_iter, &shared_size, MAX_VARINT64_LEN);
         index_iter = decode_varint32(index_iter, &non_shared_size, MAX_VARINT64_LEN);
         if (!index_iter)
             diev("Parsing index kv failed");
 
-        if (shared_size != 0) // TODO: support this
-            diev("Index block restart interval != 1 not supported");
+        if ((index_key = malloc(shared_size + non_shared_size + 1)) == NULL)
+            die("malloc() failed");
 
-        data_key = index_iter;
+        if (shared_size != 0) {
+            if (prev_index_key == NULL)
+                die("Fatal parsing error in index block");
+
+            memcpy(index_key, prev_index_key, shared_size);
+        }
+
+        free(prev_index_key);
+        memcpy(index_key + shared_size, index_iter, non_shared_size);
+        index_key[shared_size + non_shared_size] = '\0';
+
+        prev_index_key = index_key;
         index_iter += non_shared_size;
 
-        index_iter = decode_varint64(index_iter, &data_block_handle->offset, MAX_VARINT64_LEN);
-        index_iter = decode_varint64(index_iter, &data_block_handle->size, MAX_VARINT64_LEN);
-        if (!index_iter)
-            diev("Parsing index kv failed");
+        if (shared_size == 0) {
+            index_iter = decode_varint64(index_iter, &tmp_data_handle.offset, MAX_VARINT64_LEN);
+            index_iter = decode_varint64(index_iter, &tmp_data_handle.size, MAX_VARINT64_LEN);
+            if (!index_iter)
+                diev("Parsing index kv failed");
+        } else {
+            int64_t delta_size;
+            index_iter = decode_varsignedint64(index_iter, &delta_size, MAX_VARINT64_LEN);
+            if (!index_iter)
+                diev("Parsing index kv failed");
+
+            // struct IndexValue::EncodeTo
+            tmp_data_handle.offset = prev_data_handle.offset + prev_data_handle.size + kBlockTrailerSize;
+            tmp_data_handle.size = prev_data_handle.size + delta_size;
+        }
+
+        prev_data_handle = tmp_data_handle;
 
         // key > data block key, key is not in data block
-        if (strncmp(key, (const char *)data_key, shared_size + non_shared_size) > 0)
+        if (strncmp(key, (const char *)index_key, shared_size + non_shared_size) > 0)
             continue;
 
         *found = 1;
         break;
     }
 
+    *data_block_handle = tmp_data_handle;
+
+    free(prev_index_key);
     free(index_block);
 }
 
