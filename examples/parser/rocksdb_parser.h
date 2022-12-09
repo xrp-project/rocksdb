@@ -77,7 +77,7 @@ enum value_type {
     kMaxValue = 0x7F
 };
 
-static inline void unpack_sequence_and_type(uint64_t packed, uint64_t *seq, int8_t *t) {
+static inline void unpack_sequence_and_type(uint64_t packed, uint64_t *seq, enum value_type *t) {
     if (seq)
         *seq = packed >> 8;
 
@@ -119,7 +119,7 @@ struct footer {
 #define kCompressionDictBlockName "rocksdb.compression_dict"
 
 // Block Based Table Property Names - Taken from struct BlockBasedTablePropertyName
-#define kIndexTypeProperty "rocksdb.block.based.table.index.type"
+#define kIndexTypeProperty "rocksdb.block.based.table.index.type" // 4 bytes
 #define kWholeKeyFilteringProperty "rocksdb.block.based.table.whole.key.filtering"
 #define kPrefixFilteringProperty "rocksdb.block.based.table.prefix.filtering"
 

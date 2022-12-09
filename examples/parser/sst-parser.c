@@ -63,7 +63,6 @@ static void parse_footer(int sst_fd, struct footer *footer) {
     footer->magic_number = *(uint64_t *)footer_iter;
 
     if (footer->magic_number == BLOCK_MAGIC_NUMBER) {
-
         // read version
         footer_iter -= VERSION_LEN;
         footer->version = *(uint32_t *)footer_iter;
@@ -99,121 +98,35 @@ static void parse_footer(int sst_fd, struct footer *footer) {
         diev("Parsing index handle failed");
 }
 
-int main(int argc, char **argv) {
-    int sst_fd;
-    char *filename, *key;
-    uint8_t *index_block, *data_block;
-    const uint8_t *index_iter, *data_iter;
-    struct block_handle data_block_handle;
+static void parse_data_block(int sst_fd, struct block_handle *data_block_handle,
+                             char *key, char **value, uint8_t *found,
+                             enum value_type *vt) {
+    uint8_t *data_block, index_type;
+    const uint8_t *data_iter;
+    char *prev_data_key = NULL, *data_key;
+    uint32_t num_restarts, data_end, *block_footer;
+    uint64_t packed_type_seq, seq;
 
-    if (argc != 3) {
-        printf("usage: ./sst-parser <sst-file> <key>\n");
-        exit(1);
-    }
-
-    filename = argv[1];
-    key = argv[2];
-
-    if ((sst_fd = open(filename, O_RDONLY)) == -1)
-        die("open() failed");
-
-    if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
-        die("lseek() failed");
-
-    struct footer footer;
-    parse_footer(sst_fd, &footer);
-
-    print_footer(&footer);
-
-    /* 
-       meta index uses kDataBlockBinarySearch, delta encoding = True, value delta = False
-       See block_builder.cc
-       If not value delta encoded, has <shared><non_shared><value_size>, then key,
-       then block handle. If key is delta-encoded (true by default), next key starts at first
-       non-matching byte. Metaindex restart interval is 0
-       Footer contains restarts (0), num_restarts+index_type packed, and then block trailer
-       (block type + 4 byte checksum)
-    */
-
-    if (lseek(sst_fd, footer.index_handle.offset, SEEK_SET) == -1)
-        die("lseek() failed");
-
-    // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
-    // index_type = kBinarySearch and index_key_is_user_key
-
-    if ((index_block = malloc(footer.index_handle.size)) == NULL)
-        die("malloc() failed");
-
-    index_iter = index_block;
-    if (read(sst_fd, index_block, footer.index_handle.size) != footer.index_handle.size)
-        die("read() failed");
-
-    uint8_t index_type;
-    uint32_t num_restarts;
-    uint32_t *block_footer = (uint32_t *)(index_block + footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
-
-    unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
-    printf("\nReading index block...\n");
-    printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
-    uint32_t index_end = footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
-
-    uint8_t found = 0;
-
-    while (index_iter < index_block + index_end) {
-        uint32_t shared_size, non_shared_size;
-        const unsigned char *data_key;
-        index_iter = decode_varint32(index_iter, &shared_size, MAX_VARINT64_LEN);
-        index_iter = decode_varint32(index_iter, &non_shared_size, MAX_VARINT64_LEN);
-        if (!index_iter)
-            diev("Parsing index kv failed");
-
-        if (shared_size != 0)
-            diev("Index block restart interval != 1 not supported");
-
-        data_key = index_iter;
-        index_iter += non_shared_size;
-
-        index_iter = decode_varint64(index_iter, &data_block_handle.offset, MAX_VARINT64_LEN);
-        index_iter = decode_varint64(index_iter, &data_block_handle.size, MAX_VARINT64_LEN);
-        if (!index_iter)
-            diev("Parsing index kv failed");
-
-        // key > data block key, key is not in data block
-        if (strncmp(key, (const char *)data_key, shared_size + non_shared_size) > 0)
-            continue;
-
-        found = 1;
-        break;
-    }
-
-    free(index_block);
-
-    if (found == 0)
-        diev("Data block for key not found");
-
-    printf("Data block for key %s: Offset: %lx Size: %lx\n", key, data_block_handle.offset, data_block_handle.size);
+    if (!data_block_handle || !key || !value || !found || !vt)
+        diev("NULL pointer passed to parse_data_block()");
 
     // Parse data block - keys delta encoded
-    if (lseek(sst_fd, data_block_handle.offset, SEEK_SET) == -1)
+    if (lseek(sst_fd, data_block_handle->offset, SEEK_SET) == -1)
         die("lseek() failed");
 
-    if ((data_block = malloc(data_block_handle.size)) == NULL)
+    if ((data_block = malloc(data_block_handle->size)) == NULL)
         die("malloc() failed");
 
     data_iter = data_block;
-    if (read(sst_fd, data_block, data_block_handle.size) != data_block_handle.size)
+    if (read(sst_fd, data_block, data_block_handle->size) != data_block_handle->size)
         die("read() failed");
 
-    block_footer = (uint32_t *)(data_block + data_block_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
+    block_footer = (uint32_t *)(data_block + data_block_handle->size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
 
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
     printf("\nReading data block...\n");
     printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
-    uint32_t data_end = data_block_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
-
-    found = 0;
-
-    char *prev_data_key = NULL, *data_key, *value = NULL;
+    data_end = data_block_handle->size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
     while (data_iter < data_block + data_end) {
         uint32_t shared_size, non_shared_size, value_length;
@@ -250,41 +163,144 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        uint64_t packed_type_seq = *(uint64_t *)data_iter;
-        uint64_t seq;
-        int8_t vt;
+        packed_type_seq = *(uint64_t *)data_iter;
 
-        unpack_sequence_and_type(packed_type_seq, &seq, &vt);
-        printf("Seq: %lu, type: %d\n", seq, vt);
+        unpack_sequence_and_type(packed_type_seq, &seq, vt);
+        printf("Seq: %lu, type: %d\n", seq, *vt);
 
         data_iter += kNumInternalBytes;
 
-        if (vt != kTypeValue) {
-            found = 1;
-            printf("Key exists, but is no longer valid. State: %x\n", vt);
+        if (*vt != kTypeValue) {
+            *found = 1;
+            printf("Key exists, but is no longer valid. State: %x\n", *vt);
             goto cleanup;
         }
 
-        if ((value = malloc(value_length + 1)) == NULL)
+        if ((*value = malloc(value_length + 1)) == NULL)
             die("malloc() failed");
 
-        memcpy(value, data_iter, value_length);
-        value[value_length] = '\0';
+        memcpy(*value, data_iter, value_length);
+        (*value)[value_length] = '\0';
+
+        *found = 1;
+        goto cleanup;
+    }
+
+    *found = 0;
+
+cleanup:
+    free(prev_data_key);
+    free(data_block);
+    return;
+}
+
+int main(int argc, char **argv) {
+    int sst_fd;
+    char *filename, *key, *value;
+    uint8_t *index_block, found;
+    const uint8_t *index_iter;
+    struct block_handle data_block_handle;
+    enum value_type vt;
+    struct footer footer;
+
+    if (argc != 3) {
+        printf("usage: ./sst-parser <sst-file> <key>\n");
+        exit(1);
+    }
+
+    filename = argv[1];
+    key = argv[2];
+
+    if ((sst_fd = open(filename, O_RDONLY)) == -1)
+        die("open() failed");
+
+    if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
+        die("lseek() failed");
+
+    parse_footer(sst_fd, &footer);
+
+    print_footer(&footer);
+
+    /* 
+       meta index uses kDataBlockBinarySearch, delta encoding = True, value delta = False
+       See block_builder.cc
+       If not value delta encoded, has <shared><non_shared><value_size>, then key,
+       then block handle. If key is delta-encoded (true by default), next key starts at first
+       non-matching byte. Metaindex restart interval is 0
+       Footer contains restarts (0), num_restarts+index_type packed, and then block trailer
+       (block type + 4 byte checksum)
+    */
+
+    if (lseek(sst_fd, footer.index_handle.offset, SEEK_SET) == -1)
+        die("lseek() failed");
+
+    // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
+    // index_type = kBinarySearch and index_key_is_user_key
+
+    if ((index_block = malloc(footer.index_handle.size)) == NULL)
+        die("malloc() failed");
+
+    index_iter = index_block;
+    if (read(sst_fd, index_block, footer.index_handle.size) != footer.index_handle.size)
+        die("read() failed");
+
+    uint8_t index_type;
+    uint32_t num_restarts;
+    uint32_t *block_footer = (uint32_t *)(index_block + footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN);
+
+    unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
+    // TODO: check index type
+
+    printf("\nReading index block...\n");
+    printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
+    uint32_t index_end = footer.index_handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+
+    found = 0;
+
+    while (index_iter < index_block + index_end) {
+        uint32_t shared_size, non_shared_size;
+        const unsigned char *data_key;
+        index_iter = decode_varint32(index_iter, &shared_size, MAX_VARINT64_LEN);
+        index_iter = decode_varint32(index_iter, &non_shared_size, MAX_VARINT64_LEN);
+        if (!index_iter)
+            diev("Parsing index kv failed");
+
+        if (shared_size != 0) // TODO: support this
+            diev("Index block restart interval != 1 not supported");
+
+        data_key = index_iter;
+        index_iter += non_shared_size;
+
+        index_iter = decode_varint64(index_iter, &data_block_handle.offset, MAX_VARINT64_LEN);
+        index_iter = decode_varint64(index_iter, &data_block_handle.size, MAX_VARINT64_LEN);
+        if (!index_iter)
+            diev("Parsing index kv failed");
+
+        // key > data block key, key is not in data block
+        if (strncmp(key, (const char *)data_key, shared_size + non_shared_size) > 0)
+            continue;
 
         found = 1;
         break;
     }
+
+    free(index_block);
+
+    if (found == 0)
+        diev("Data block for key not found");
+
+    printf("Data block for key %s: Offset: %lx Size: %lx\n", key, data_block_handle.offset, data_block_handle.size);
+
+    found = 0;
+
+    parse_data_block(sst_fd, &data_block_handle, key, &value, &found, &vt);
 
     if (found == 0)
         printf("Key %s not found.\n", key);
     else
         printf("Key found! %s, %s\n", key, value);
 
-cleanup:
-
-    free(prev_data_key);
     free(value);
-    free(data_block);
 
     close(sst_fd);
 }
