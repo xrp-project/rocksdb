@@ -14,4 +14,10 @@ const unsigned char *decode_varint32(const unsigned char *src, uint32_t *value, 
 unsigned char *encode_varint64(unsigned char *dst, uint64_t n, uint8_t limit);
 const unsigned char *decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit);
 
+uint64_t i64ToZigzag(const int64_t l);
+int64_t zigzagToI64(uint64_t n);
+
+unsigned char *encode_varsignedint64(unsigned char *dst, int64_t n, uint8_t limit);
+const unsigned char *decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit);
+
 #endif // _PARSER_VARINT_H_

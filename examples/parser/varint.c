@@ -98,3 +98,28 @@ const unsigned char *decode_varint64(const unsigned char *src, uint64_t *value, 
 
     return NULL;
 }
+
+// Zigzag encoding and decoding for varsigned ints
+uint64_t i64ToZigzag(const int64_t l) {
+    return ((uint64_t)(l) << 1) ^ (uint64_t)(l >> 63);
+}
+
+int64_t zigzagToI64(uint64_t n) {
+    return (n >> 1) ^ -(uint64_t)(n & 1);
+}
+
+unsigned char *encode_varsignedint64(unsigned char *dst, int64_t n, uint8_t limit) {
+    return encode_varint64(dst, i64ToZigzag(n), limit);
+}
+
+const unsigned char *decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
+    uint64_t u = 0;
+    const unsigned char* ret;
+
+    if (!value)
+        return NULL;
+    
+    ret = decode_varint64(src, &u, limit);
+    *value = zigzagToI64(u);
+    return ret;
+}
