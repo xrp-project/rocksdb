@@ -12,7 +12,7 @@ test: rocksdb_parser.h ebpf.h
 
 # 	    -Wno-unused-value  -Werror 
 parser.o: parser.c rocksdb_parser.h data_block_footer.h ebpf.h
-	$(CLANG) -S \
+	$(CLANG) -S -g\
 	    -target bpf \
 	    -D __BPF_TRACING__ \
 		-DROCKSDB_EBPF \
