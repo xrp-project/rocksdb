@@ -1,7 +1,23 @@
-#ifndef _PARSER_ROCKSDB_PARSER_H_
-#define _PARSER_ROCKSDB_PARSER_H_
+#ifndef _EBPF_ROCKSDB_PARSER_H_
+#define _EBPF_ROCKSDB_PARSER_H_
 
+#ifdef ROCKSDB_EBPF
+/*
+ * Type definitions for eBPF
+ */
+#define uint64_t __u64
+#define uint32_t __u32
+#define uint8_t __u8
+#define int64_t __s64
+#define int32_t __s32
+#define int8_t __s8
+#define bool short
+#define NULL 0
+#define true 1
+#define false 0
+#else
 #include <stdint.h>
+#endif
 
 // Footer member sizes
 #define CHECKSUM_LEN 1
@@ -123,4 +139,20 @@ struct footer {
 #define kWholeKeyFilteringProperty "rocksdb.block.based.table.whole.key.filtering"
 #define kPrefixFilteringProperty "rocksdb.block.based.table.prefix.filtering"
 
-#endif // _PARSER_ROCKSDB_PARSER_H_
+// eBPF program
+#define MAX_KEY_LEN 63
+
+enum parse_stage {
+    kFooterStage = 0x0,
+    kIndexStage = 0x1,
+    kDataStage = 0x2
+};
+
+struct rocksdb_ebpf_context {
+    uint32_t footer_len;
+    char key[MAX_KEY_LEN + 1];
+    struct block_handle handle;
+    enum parse_stage stage;
+};
+
+#endif // _EBPF_ROCKSDB_PARSER_H_

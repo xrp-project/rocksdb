@@ -54,6 +54,9 @@ static void parse_footer(int sst_fd, struct footer *footer) {
     if (footer == NULL)
         diev("NULL footer pointer passed to parse_footer()");
 
+    if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
+        die("lseek() failed");
+
     // Assuming little endian
     if (read(sst_fd, footer_arr, sizeof(footer_arr)) != sizeof(footer_arr))
         die("read() failed");
@@ -307,9 +310,6 @@ int main(int argc, char **argv) {
 
     if ((sst_fd = open(filename, O_RDONLY)) == -1)
         die("open() failed");
-
-    if (lseek(sst_fd, -1 * MAX_FOOTER_LEN, SEEK_END) == -1)
-        die("lseek() failed");
 
     parse_footer(sst_fd, &footer);
     print_footer(&footer);
