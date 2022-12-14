@@ -151,6 +151,7 @@ enum parse_stage {
 struct rocksdb_ebpf_context {
     uint32_t footer_len;
     char key[MAX_KEY_LEN + 1];
+//    char index_key[MAX_KEY_LEN + 1];
     struct block_handle handle;
     enum parse_stage stage;
 };

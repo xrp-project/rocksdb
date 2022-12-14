@@ -35,7 +35,7 @@ char LICENSE[] SEC("license") = "GPL";
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
 // Returns pointer to one past end of src
-const inline unsigned char *decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit) {
+const __inline unsigned char *decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit) {
     uint64_t result = 0;
     const unsigned char *ptr = src;
 
@@ -60,7 +60,7 @@ const inline unsigned char *decode_varint64(const unsigned char *src, uint64_t *
 }
 
 // Returns pointer to one past end of src
-const inline unsigned char *decode_varint32(const unsigned char *src, uint32_t *value, uint8_t limit) {
+const __inline unsigned char *decode_varint32(const unsigned char *src, uint32_t *value, uint8_t limit) {
     uint32_t result = 0;
     const unsigned char *ptr = src;
 
@@ -84,11 +84,11 @@ const inline unsigned char *decode_varint32(const unsigned char *src, uint32_t *
     return NULL;
 }
 
-inline int64_t zigzagToI64(uint64_t n) {
+__inline int64_t zigzagToI64(uint64_t n) {
     return (n >> 1) ^ -(uint64_t)(n & 1);
 }
 
-const inline unsigned char *decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
+const __inline unsigned char *decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
     uint64_t u = 0;
     const unsigned char* ret;
 
@@ -108,7 +108,7 @@ const inline unsigned char *decode_varsignedint64(const unsigned char *src, int6
                          ##__VA_ARGS__);                \
 })
 
-inline int strncmp(const char * s1, const char * s2, unsigned long n) {
+__inline int strncmp(const char * s1, const char * s2, unsigned long n) {
     while ( n && *s1 && ( *s1 == *s2 ) ) {
         ++s1;
         ++s2;
@@ -121,9 +121,9 @@ inline int strncmp(const char * s1, const char * s2, unsigned long n) {
     }
 }
 
-char index_key[MAX_KEY_LEN + 1];
+char index_key[MAX_KEY_LEN + 1] = {0};
 
-static __inline int parse_index_block(struct bpf_xrp *context, int32_t index_offset) {
+static __noinline int parse_index_block(struct bpf_xrp *context, int32_t index_offset) {
     uint8_t *index_block, index_type, found;
     const uint8_t *index_iter;
     uint32_t num_restarts, index_end, *block_footer;
@@ -159,7 +159,9 @@ static __inline int parse_index_block(struct bpf_xrp *context, int32_t index_off
 
     while (index_iter < index_block + index_end) {
         uint32_t shared_size, non_shared_size;
-        const char *index_key_ptr = index_key;
+        unsigned char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
+        unsigned char *index_key_ptr = index_key;
+        memset(index_key, 0, MAX_KEY_LEN + 1);
 
         index_iter = decode_varint32(index_iter, &shared_size, MAX_VARINT64_LEN);
         index_iter = decode_varint32(index_iter, &non_shared_size, MAX_VARINT64_LEN);
@@ -176,12 +178,12 @@ static __inline int parse_index_block(struct bpf_xrp *context, int32_t index_off
 
         index_key_ptr += shared_size;
 
-        uint32_t size = non_shared_size + shared_size;
+        //uint32_t size = non_shared_size + shared_size;
 
-        if (non_shared_size > MAX_KEY_LEN - shared_size || non_shared_size < 0)
+        if (non_shared_size > MAX_KEY_LEN || non_shared_size < 0)
             return -EBPF_EINVAL;
 
-        bpf_core_read((void *)index_key_ptr, non_shared_size & MAX_KEY_LEN, index_iter);
+        bpf_core_read(index_key_ptr, non_shared_size, index_iter);
         index_key[shared_size + non_shared_size] = '\0';
 
         bpf_core_read(prev_index_key, shared_size + non_shared_size + 1, index_key);
@@ -227,7 +229,7 @@ static __inline int parse_index_block(struct bpf_xrp *context, int32_t index_off
     return 0;
 }
 
-static __inline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
+static __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
     uint8_t *footer_ptr;
     const uint8_t *handle, *footer_iter;
     struct footer footer;
