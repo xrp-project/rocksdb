@@ -1,8 +1,9 @@
 #define _GNU_SOURCE     // for O_DIRECT
-#define _ISOC11_SOURCE  // for aligned_alloc()
+#define _ISOC11_SOURCE  // for aligned_alloc(), posix_memalign()
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <sys/mman.h>   // for madvise()
 #include <sys/param.h>  // for MAX()
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,6 +48,7 @@ int main(int argc, char **argv) {
     uint64_t offset;
     struct stat st;
     struct rocksdb_ebpf_context ctx;
+    const size_t huge_page_size = 1 << 21;
 
     if (argc != 3) {
         printf("usage: ./test <sst-file> <key>\n");
@@ -73,9 +75,17 @@ int main(int argc, char **argv) {
     //offset = st.st_size - MAX_FOOTER_LEN;
     printf("offset: %ld\n", offset);
 
-    data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE * 2);
+    // use madvise to ask for transparent huge page
+    if (posix_memalign((void **) &data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
+        die("posix_memalign() failed");
+
+    if (madvise(data_buf, EBPF_DATA_BUFFER_SIZE, MADV_HUGEPAGE) != 0)
+        die("madvise(..., MADV_HUGEPAGE) failed");
+
+    /*data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
     if (!data_buf)
         die("aligned_alloc() failed");
+    */
 
     scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
     if (!scratch_buf)
