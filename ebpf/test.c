@@ -20,7 +20,7 @@ static void die(const char *message) {
     exit(1); 
 }
 
-static void print_block_handle(struct block_handle *handle) {
+static void __attribute__((unused)) print_block_handle(struct block_handle *handle) {
     if (handle == NULL)
         return;
 
