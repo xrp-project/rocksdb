@@ -35,8 +35,9 @@ char LICENSE[] SEC("license") = "GPL";
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
 // Returns pointer to one past end of src
-const __inline unsigned char *decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit) {
+__inline uint32_t decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit) {
     uint64_t result = 0;
+    uint32_t counter = 0;
     const unsigned char *ptr = src;
 
     if (!ptr || !value)
@@ -45,6 +46,7 @@ const __inline unsigned char *decode_varint64(const unsigned char *src, uint64_t
     for (uint8_t shift = 0; shift <= 63 && src - ptr < limit; shift += VARINT_SHIFT) {
         unsigned char byte = *ptr;
         ptr++;
+        counter++;
 
         if (byte & VARINT_MSB) {
             result |= ((byte & (VARINT_MSB - 1)) << shift);
@@ -52,17 +54,18 @@ const __inline unsigned char *decode_varint64(const unsigned char *src, uint64_t
         else {
             result |= (byte << shift);
             *value = result;
-            return ptr;
+            return counter;
         }
     }
 
-    return NULL;
+    return 0;
 }
 
 // Returns pointer to one past end of src
-const __inline unsigned char *decode_varint32(const unsigned char *src, uint32_t *value, uint8_t limit) {
+__inline uint32_t decode_varint32(const unsigned char *src, uint32_t *value, uint8_t limit) {
     uint32_t result = 0;
     const unsigned char *ptr = src;
+    uint32_t counter = 0;
 
     if (!ptr || !value)
         return NULL;
@@ -70,6 +73,7 @@ const __inline unsigned char *decode_varint32(const unsigned char *src, uint32_t
     for (uint8_t shift = 0; shift <= 27 && src - ptr < limit; shift += VARINT_SHIFT) {
         unsigned char byte = *ptr;
         ptr++;
+        counter++;
 
         if (byte & VARINT_MSB) {
             result |= ((byte & (VARINT_MSB - 1)) << shift);
@@ -77,20 +81,20 @@ const __inline unsigned char *decode_varint32(const unsigned char *src, uint32_t
         else {
             result |= (byte << shift);
             *value = result;
-            return ptr;
+            return counter;
         }
     }
 
-    return NULL;
+    return 0;
 }
 
 __inline int64_t zigzagToI64(uint64_t n) {
     return (n >> 1) ^ -(uint64_t)(n & 1);
 }
 
-const __inline unsigned char *decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
+__inline uint32_t decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
     uint64_t u = 0;
-    const unsigned char* ret;
+    uint32_t ret;
 
     if (!value)
         return NULL;
@@ -108,7 +112,10 @@ const __inline unsigned char *decode_varsignedint64(const unsigned char *src, in
                          ##__VA_ARGS__);                \
 })
 
-__inline int strncmp(const char * s1, const char * s2, unsigned long n) {
+__noinline int strncmp(const char * s1, const char * s2, unsigned long n) {
+    if (n > MAX_KEY_LEN + 1)
+        return -1; // should never happen
+
     while ( n && *s1 && ( *s1 == *s2 ) ) {
         ++s1;
         ++s2;
@@ -121,32 +128,63 @@ __inline int strncmp(const char * s1, const char * s2, unsigned long n) {
     }
 }
 
+__noinline int strncmp_key(struct bpf_xrp *context) {
+    uint8_t n = MAX_KEY_LEN;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    char *user_key = rocksdb_ctx->key;
+    char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
+
+    if (n > MAX_KEY_LEN + 1)
+        return -1; // should never happen
+    
+    while ( n && *user_key && ( *user_key == *index_key ) ) {
+        ++user_key;
+        ++index_key;
+        --n;
+    }
+    if ( n == 0 ) {
+        return 0;
+    } else {
+        return *(unsigned char *)user_key - *(unsigned char *)index_key;
+    }
+}
+
 char index_key[MAX_KEY_LEN + 1] = {0};
 
-static __noinline int parse_index_block(struct bpf_xrp *context, int32_t index_offset) {
+static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_offset) {
     uint8_t *index_block, index_type, found;
     const uint8_t *index_iter;
     uint32_t num_restarts, index_end, *block_footer;
     char prev_index_key[MAX_KEY_LEN + 1]= {0};
-    struct block_handle tmp_data_handle, prev_data_handle;
+    struct block_handle tmp_data_handle = {}, prev_data_handle = {};
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint32_t index_offset = index_block_offset;
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
     // index_type = kBinarySearch and index_key_is_user_key
 
-    if (index_offset > EBPF_BLOCK_SIZE || index_offset < 0)
+    if (index_block_offset > EBPF_BLOCK_SIZE || index_block_offset < 0)
         return -EBPF_EINVAL;
 
-    index_block = context->data + index_offset;
+    index_block = context->data;
 
     index_iter = index_block;
 
     if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE / 2 + kBlockTrailerSize + BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
 
-    index_iter += rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+    //index_iter += rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+    //index_offset += rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
 
-    block_footer = (uint32_t *)index_iter;
+    uint32_t block_end_offset = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+    volatile uint32_t fake_var = 0;
+
+    block_end_offset += fake_var; // prevent compiler from optimizing away bounds check
+
+    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
+        return -EBPF_EINVAL;
+
+    block_footer = (uint32_t *)(index_block + block_end_offset);
 
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
     // TODO: check index type
@@ -157,53 +195,52 @@ static __noinline int parse_index_block(struct bpf_xrp *context, int32_t index_o
 
     found = 0;
 
-    while (index_iter < index_block + index_end) {
-        uint32_t shared_size, non_shared_size;
+    while (index_offset < index_end && index_offset < EBPF_DATA_BUFFER_SIZE) {
+        volatile uint32_t shared_size, non_shared_size;
         unsigned char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
         unsigned char *index_key_ptr = index_key;
         memset(index_key, 0, MAX_KEY_LEN + 1);
 
-        index_iter = decode_varint32(index_iter, &shared_size, MAX_VARINT64_LEN);
-        index_iter = decode_varint32(index_iter, &non_shared_size, MAX_VARINT64_LEN);
-        if (!index_iter) {
+        index_offset += decode_varint32(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &shared_size, MAX_VARINT64_LEN);
+        index_offset += decode_varint32(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &non_shared_size, MAX_VARINT64_LEN);
+        /*if (!index_iter) {
             bpf_printk("Parsing index kv failed");
             return -EBPF_EINVAL;
-        }
-
-        /*if (shared_size > MAX_KEY_LEN || non_shared_size > MAX_KEY_LEN)
-            return -EBPF_EINVAL;*/
+        }*/
 
         if (shared_size > 0)
             bpf_core_read(index_key, shared_size & MAX_KEY_LEN, (unsigned char *)prev_index_key);
 
-        index_key_ptr += shared_size;
-
-        //uint32_t size = non_shared_size + shared_size;
-
-        if (non_shared_size > MAX_KEY_LEN || non_shared_size < 0)
+        if (shared_size > MAX_KEY_LEN || non_shared_size > MAX_KEY_LEN)
             return -EBPF_EINVAL;
 
-        bpf_core_read(index_key_ptr, non_shared_size, index_iter);
-        index_key[shared_size + non_shared_size] = '\0';
+        index_key_ptr += shared_size;
+        //uint32_t size = non_shared_size + shared_size;
 
-        bpf_core_read(prev_index_key, shared_size + non_shared_size + 1, index_key);
+        //if (non_shared_size > MAX_KEY_LEN || non_shared_size < 0)
+        //    return -EBPF_EINVAL;
 
-        index_iter += non_shared_size;
+        bpf_core_read(index_key + (shared_size & MAX_KEY_LEN), non_shared_size & MAX_KEY_LEN, index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)));
+        index_key[(shared_size + non_shared_size) & MAX_KEY_LEN] = '\0';
+
+        bpf_core_read(prev_index_key, ((shared_size + non_shared_size ) & MAX_KEY_LEN) + 1, index_key);
+
+        index_offset += non_shared_size & MAX_KEY_LEN;
 
         if (shared_size == 0) {
-            index_iter = decode_varint64(index_iter, &tmp_data_handle.offset, MAX_VARINT64_LEN);
-            index_iter = decode_varint64(index_iter, &tmp_data_handle.size, MAX_VARINT64_LEN);
-            if (!index_iter) {
+            index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.offset, MAX_VARINT64_LEN);
+            index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.size, MAX_VARINT64_LEN);
+            /*if (!index_iter) {
                 bpf_printk("Parsing index kv failed");
                 return -EBPF_EINVAL;
-            }
+            }*/
         } else {
             int64_t delta_size;
-            index_iter = decode_varsignedint64(index_iter, &delta_size, MAX_VARINT64_LEN);
-            if (!index_iter) {
+            index_offset += decode_varsignedint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &delta_size, MAX_VARINT64_LEN);
+            /*if (!index_iter) {
                 bpf_printk("Parsing index kv failed");
                 return -EBPF_EINVAL;
-            }
+            }*/
 
             // struct IndexValue::EncodeTo
             tmp_data_handle.offset = prev_data_handle.offset + prev_data_handle.size + kBlockTrailerSize;
@@ -216,7 +253,7 @@ static __noinline int parse_index_block(struct bpf_xrp *context, int32_t index_o
         if (shared_size + non_shared_size > MAX_KEY_LEN)
             return -EBPF_EINVAL;
 
-        if (strncmp(rocksdb_ctx->key, index_key, shared_size + non_shared_size) > 0)
+        if (strncmp_key(context) > 0)
             continue;
 
         found = 1;
@@ -275,15 +312,17 @@ static __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offse
         return -EBPF_EINVAL;
     }
 
-    handle = decode_varint64(footer_iter, &footer.metaindex_handle.offset, MAX_VARINT64_LEN);
-    handle = decode_varint64(handle, &footer.metaindex_handle.size, MAX_VARINT64_LEN);
+    handle = footer_iter;
+
+    handle += decode_varint64(footer_iter, &footer.metaindex_handle.offset, MAX_VARINT64_LEN);
+    handle += decode_varint64(handle, &footer.metaindex_handle.size, MAX_VARINT64_LEN);
     if (!handle) {
         bpf_printk("Parsing metaindex handle failed");
         return -EBPF_EINVAL;
     }
 
-    handle = decode_varint64(handle, &footer.index_handle.offset, MAX_VARINT64_LEN);
-    handle = decode_varint64(handle, &footer.index_handle.size, MAX_VARINT64_LEN);
+    handle += decode_varint64(handle, &footer.index_handle.offset, MAX_VARINT64_LEN);
+    handle += decode_varint64(handle, &footer.index_handle.size, MAX_VARINT64_LEN);
     if (!handle) {
         bpf_printk("Parsing index handle failed");
         return -EBPF_EINVAL;
