@@ -35,7 +35,7 @@ char LICENSE[] SEC("license") = "GPL";
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
 // Returns pointer to one past end of src
-__inline uint32_t decode_varint64(const unsigned char *src, uint64_t *value, uint8_t limit) {
+__inline uint32_t decode_varint64_old(const unsigned char *src, uint64_t *value, uint8_t limit) {
     uint64_t result = 0;
     uint32_t counter = 0;
     const unsigned char *ptr = src;
@@ -62,10 +62,40 @@ __inline uint32_t decode_varint64(const unsigned char *src, uint64_t *value, uin
 }
 
 // Returns pointer to one past end of src
-__inline uint32_t decode_varint32(const unsigned char *src, uint32_t *value, uint8_t limit) {
-    uint32_t result = 0;
-    const unsigned char *ptr = src;
+__noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
+    const unsigned char *data_buffer = context->data;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint64_t result = 0;
     uint32_t counter = 0;
+    const unsigned char *ptr;
+
+    if (offset < 0 || offset > EBPF_DATA_BUFFER_SIZE - MAX_VARINT64_LEN)
+        return 0;
+
+    ptr = data_buffer + offset;
+
+    for (uint8_t shift = 0; shift <= 63; shift += VARINT_SHIFT) {
+        unsigned char byte = *(data_buffer + offset + counter);
+        counter++;
+
+        if (byte & VARINT_MSB) {
+            result |= ((byte & (VARINT_MSB - 1)) << shift);
+        }
+        else {
+            result |= (byte << shift);
+            rocksdb_ctx->varint_context.varint64 = result;
+            return counter;
+        }
+    }
+
+    return 0;
+}
+
+// Returns pointer to one past end of src
+__inline uint32_t decode_varint32_old(const unsigned char *src, uint32_t *value, uint8_t limit) {
+    uint32_t result = 0;
+    uint32_t counter = 0;
+    const unsigned char *ptr = src;
 
     if (!ptr || !value)
         return 0;
@@ -88,19 +118,58 @@ __inline uint32_t decode_varint32(const unsigned char *src, uint32_t *value, uin
     return 0;
 }
 
+// Returns pointer to one past end of src
+__noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
+    const unsigned char *data_buffer = context->data;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint32_t result = 0;
+    uint32_t counter = 0;
+    const unsigned char *ptr;
+
+    if (offset < 0 || offset > EBPF_DATA_BUFFER_SIZE - MAX_VARINT32_LEN)
+        return 0;
+
+    ptr = data_buffer + offset;
+
+    for (uint8_t shift = 0; shift <= 27; shift += VARINT_SHIFT) {
+        unsigned char byte = *(data_buffer + offset + counter);
+        counter++;
+
+        if (byte & VARINT_MSB) {
+            result |= ((byte & (VARINT_MSB - 1)) << shift);
+        }
+        else {
+            result |= (byte << shift);
+            rocksdb_ctx->varint_context.varint32 = result;
+            return counter;
+        }
+    }
+
+    return 0;
+}
+
 __inline int64_t zigzagToI64(uint64_t n) {
     return (n >> 1) ^ -(uint64_t)(n & 1);
 }
 
-__inline uint32_t decode_varsignedint64(const unsigned char *src, int64_t *value, uint8_t limit) {
+__inline uint32_t decode_varsignedint64_old(const unsigned char *src, int64_t *value, uint8_t limit) {
     uint64_t u = 0;
     uint32_t ret;
 
     if (!value)
         return 0;
     
-    ret = decode_varint64(src, &u, limit);
+    ret = decode_varint64_old(src, &u, limit);
     *value = zigzagToI64(u);
+    return ret;
+}
+
+__noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint32_t ret;
+    
+    ret = decode_varint64(context, offset, limit);
+    rocksdb_ctx->varint_context.varsigned64 = zigzagToI64(rocksdb_ctx->varint_context.varint64);
     return ret;
 }
 
@@ -151,6 +220,88 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
 
 char index_key[MAX_KEY_LEN + 1] = {0};
 
+static __noinline int index_block_loop(struct bpf_xrp *context, unsigned int index_offset) {
+    volatile uint32_t shared_size, non_shared_size;
+    unsigned char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct block_handle tmp_data_handle = {};
+    uint8_t *index_block = context->data;
+    memset(index_key, 0, MAX_KEY_LEN + 1);
+
+    //index_offset += decode_varint32(index_block + ((index_offset + fake_var) & (EBPF_DATA_BUFFER_SIZE - 1)), &shared_size, MAX_VARINT32_LEN);
+    //index_offset += decode_varint32(index_block + ((index_offset + fake_var) & (EBPF_DATA_BUFFER_SIZE - 1)), &non_shared_size, MAX_VARINT32_LEN);
+
+    index_offset += decode_varint32(context, index_offset, MAX_VARINT32_LEN);
+    shared_size = rocksdb_ctx->varint_context.varint32;
+    index_offset += decode_varint32(context, index_offset, MAX_VARINT32_LEN);
+    non_shared_size = rocksdb_ctx->varint_context.varint32;
+
+    /*if (!index_iter) {
+        bpf_printk("Parsing index kv failed");
+        return -EBPF_EINVAL;
+    }*/
+
+    if (shared_size > 0)
+        bpf_core_read(index_key, shared_size & MAX_KEY_LEN, (unsigned char *)rocksdb_ctx->index_context.prev_index_key);
+
+    if (shared_size > MAX_KEY_LEN || non_shared_size > MAX_KEY_LEN)
+        return -EBPF_EINVAL;
+
+    //uint32_t size = non_shared_size + shared_size;
+
+    //if (non_shared_size > MAX_KEY_LEN || non_shared_size < 0)
+    //    return -EBPF_EINVAL;
+
+    bpf_core_read(index_key + (shared_size & MAX_KEY_LEN), non_shared_size & MAX_KEY_LEN, index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)));
+    index_key[(shared_size + non_shared_size) & MAX_KEY_LEN] = '\0';
+
+    bpf_core_read(rocksdb_ctx->index_context.prev_index_key, ((shared_size + non_shared_size ) & MAX_KEY_LEN) + 1, index_key);
+
+    index_offset += non_shared_size & MAX_KEY_LEN;
+
+    if (shared_size == 0) {
+        //index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.offset, MAX_VARINT64_LEN);
+        //index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.size, MAX_VARINT64_LEN);
+
+        index_offset += decode_varint64(context, index_offset, MAX_VARINT64_LEN);
+        tmp_data_handle.offset = rocksdb_ctx->varint_context.varint64;
+
+        index_offset += decode_varint64(context, index_offset, MAX_VARINT64_LEN);
+        tmp_data_handle.size = rocksdb_ctx->varint_context.varint64;
+
+        /*if (!index_iter) {
+            bpf_printk("Parsing index kv failed");
+            return -EBPF_EINVAL;
+        }*/
+    } else {
+        int64_t delta_size;
+        //index_offset += decode_varsignedint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &delta_size, MAX_VARINT64_LEN);
+
+        index_offset += decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN);
+        delta_size = rocksdb_ctx->varint_context.varsigned64;
+
+        /*if (!index_iter) {
+            bpf_printk("Parsing index kv failed");
+            return -EBPF_EINVAL;
+        }*/
+
+        // struct IndexValue::EncodeTo
+        tmp_data_handle.offset = rocksdb_ctx->index_context.prev_data_handle.offset + rocksdb_ctx->index_context.prev_data_handle.size + kBlockTrailerSize;
+        tmp_data_handle.size = rocksdb_ctx->index_context.prev_data_handle.size + delta_size;
+    }
+
+    rocksdb_ctx->index_context.prev_data_handle = tmp_data_handle;
+
+    // key > data block key, key is not in data block
+    if (shared_size + non_shared_size > MAX_KEY_LEN)
+        return -EBPF_EINVAL;
+
+    if (strncmp_key(context) > 0)
+        return 0; // not found
+
+    return 1; // found
+}
+
 static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_offset) {
     uint8_t *index_block, index_type, found;
     const uint8_t *index_iter;
@@ -189,8 +340,6 @@ static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
     // TODO: check index type
 
-    //printf("\nReading index block...\n");
-    //printf("Num restarts: %d, index type: %d\n", num_restarts, index_type);
     index_end = rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
     found = 0;
@@ -198,11 +347,16 @@ static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_
     while (index_offset < index_end && index_offset < EBPF_DATA_BUFFER_SIZE) {
         volatile uint32_t shared_size, non_shared_size;
         unsigned char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
-        unsigned char *index_key_ptr = index_key;
         memset(index_key, 0, MAX_KEY_LEN + 1);
 
-        index_offset += decode_varint32(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &shared_size, MAX_VARINT64_LEN);
-        index_offset += decode_varint32(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &non_shared_size, MAX_VARINT64_LEN);
+        //index_offset += decode_varint32(index_block + ((index_offset + fake_var) & (EBPF_DATA_BUFFER_SIZE - 1)), &shared_size, MAX_VARINT32_LEN);
+        //index_offset += decode_varint32(index_block + ((index_offset + fake_var) & (EBPF_DATA_BUFFER_SIZE - 1)), &non_shared_size, MAX_VARINT32_LEN);
+
+        index_offset += decode_varint32(context, index_offset, MAX_VARINT32_LEN);
+        shared_size = rocksdb_ctx->varint_context.varint32;
+        index_offset += decode_varint32(context, index_offset, MAX_VARINT32_LEN);
+        non_shared_size = rocksdb_ctx->varint_context.varint32;
+
         /*if (!index_iter) {
             bpf_printk("Parsing index kv failed");
             return -EBPF_EINVAL;
@@ -214,7 +368,6 @@ static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_
         if (shared_size > MAX_KEY_LEN || non_shared_size > MAX_KEY_LEN)
             return -EBPF_EINVAL;
 
-        index_key_ptr += shared_size;
         //uint32_t size = non_shared_size + shared_size;
 
         //if (non_shared_size > MAX_KEY_LEN || non_shared_size < 0)
@@ -228,15 +381,26 @@ static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_
         index_offset += non_shared_size & MAX_KEY_LEN;
 
         if (shared_size == 0) {
-            index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.offset, MAX_VARINT64_LEN);
-            index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.size, MAX_VARINT64_LEN);
+            //index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.offset, MAX_VARINT64_LEN);
+            //index_offset += decode_varint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &tmp_data_handle.size, MAX_VARINT64_LEN);
+
+            index_offset += decode_varint64(context, index_offset, MAX_VARINT64_LEN);
+            tmp_data_handle.offset = rocksdb_ctx->varint_context.varint64;
+
+            index_offset += decode_varint64(context, index_offset, MAX_VARINT64_LEN);
+            tmp_data_handle.size = rocksdb_ctx->varint_context.varint64;
+
             /*if (!index_iter) {
                 bpf_printk("Parsing index kv failed");
                 return -EBPF_EINVAL;
             }*/
         } else {
             int64_t delta_size;
-            index_offset += decode_varsignedint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &delta_size, MAX_VARINT64_LEN);
+            //index_offset += decode_varsignedint64(index_block + (index_offset & (EBPF_DATA_BUFFER_SIZE - 1)), &delta_size, MAX_VARINT64_LEN);
+
+            index_offset += decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN);
+            delta_size = rocksdb_ctx->varint_context.varsigned64;
+
             /*if (!index_iter) {
                 bpf_printk("Parsing index kv failed");
                 return -EBPF_EINVAL;
@@ -262,7 +426,7 @@ static __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_
 
     memcpy(&rocksdb_ctx->handle, &tmp_data_handle, sizeof(struct block_handle));
 
-    rocksdb_ctx->stage = kDataStage ;
+    rocksdb_ctx->stage = kDataStage;
     return 0;
 }
 
@@ -314,15 +478,27 @@ static __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offse
 
     handle = footer_iter;
 
-    handle += decode_varint64(footer_iter, &footer.metaindex_handle.offset, MAX_VARINT64_LEN);
-    handle += decode_varint64(handle, &footer.metaindex_handle.size, MAX_VARINT64_LEN);
+    //handle += decode_varint64(footer_iter, &footer.metaindex_handle.offset, MAX_VARINT64_LEN);
+    //handle += decode_varint64(handle, &footer.metaindex_handle.size, MAX_VARINT64_LEN);
+
+    handle += decode_varint64(context, footer_iter - (const unsigned char *)context->data, MAX_VARINT64_LEN);
+    footer.metaindex_handle.offset = rocksdb_ctx->varint_context.varint64;
+    handle += decode_varint64(context, handle - (const unsigned char *)context->data, MAX_VARINT64_LEN);
+    footer.metaindex_handle.size = rocksdb_ctx->varint_context.varint64;
+
+    // TODO: fix decode_varint return handling
     if (!handle) {
         bpf_printk("Parsing metaindex handle failed");
         return -EBPF_EINVAL;
     }
 
-    handle += decode_varint64(handle, &footer.index_handle.offset, MAX_VARINT64_LEN);
-    handle += decode_varint64(handle, &footer.index_handle.size, MAX_VARINT64_LEN);
+    //handle += decode_varint64(handle, &footer.index_handle.offset, MAX_VARINT64_LEN);
+    //handle += decode_varint64(handle, &footer.index_handle.size, MAX_VARINT64_LEN);
+
+    handle += decode_varint64(context, handle - (const unsigned char *)context->data, MAX_VARINT64_LEN);
+    footer.index_handle.offset = rocksdb_ctx->varint_context.varint64;
+    handle += decode_varint64(context, handle - (const unsigned char *)context->data, MAX_VARINT64_LEN);
+    footer.index_handle.size = rocksdb_ctx->varint_context.varint64;
     if (!handle) {
         bpf_printk("Parsing index handle failed");
         return -EBPF_EINVAL;

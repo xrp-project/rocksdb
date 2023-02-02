@@ -22,6 +22,7 @@
 // Footer member sizes
 #define CHECKSUM_LEN 1
 #define MAX_VARINT64_LEN 10 // kMaxVarint64Length = 10
+#define MAX_VARINT32_LEN 5
 #define VERSION_LEN 4
 #define MAGIC_NUM_LEN 8 // kMagicNumberLengthByte = 8
 #define MAX_BLOCK_HANDLE_LEN (2 * MAX_VARINT64_LEN) // kMaxEncodedLength = 2 * kMaxVarint64Length
@@ -148,12 +149,25 @@ enum parse_stage {
     kDataStage = 0x2
 };
 
+union varint_context {
+    uint64_t varint64;
+    uint32_t varint32;
+    int64_t varsigned64;
+};
+
+struct index_parse_context {
+    char prev_index_key[MAX_KEY_LEN + 1];
+    struct block_handle prev_data_handle;
+};
+
 struct rocksdb_ebpf_context {
     uint32_t footer_len;
     char key[MAX_KEY_LEN + 1];
 //    char index_key[MAX_KEY_LEN + 1];
     struct block_handle handle;
     enum parse_stage stage;
+    union varint_context varint_context;
+    struct index_parse_context index_context;
 };
 
 #endif // _EBPF_ROCKSDB_PARSER_H_
