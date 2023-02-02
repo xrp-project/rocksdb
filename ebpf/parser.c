@@ -26,7 +26,7 @@ char LICENSE[] SEC("license") = "GPL";
 #define int32_t __s32
 #define int8_t __s8
 #define bool short
-#define NULL 0
+//#define NULL 0
 #define true 1
 #define false 0
 
@@ -41,7 +41,7 @@ __inline uint32_t decode_varint64(const unsigned char *src, uint64_t *value, uin
     const unsigned char *ptr = src;
 
     if (!ptr || !value)
-        return NULL;
+        return 0;
 
     for (uint8_t shift = 0; shift <= 63 && src - ptr < limit; shift += VARINT_SHIFT) {
         unsigned char byte = *ptr;
@@ -68,7 +68,7 @@ __inline uint32_t decode_varint32(const unsigned char *src, uint32_t *value, uin
     uint32_t counter = 0;
 
     if (!ptr || !value)
-        return NULL;
+        return 0;
 
     for (uint8_t shift = 0; shift <= 27 && src - ptr < limit; shift += VARINT_SHIFT) {
         unsigned char byte = *ptr;
@@ -97,7 +97,7 @@ __inline uint32_t decode_varsignedint64(const unsigned char *src, int64_t *value
     uint32_t ret;
 
     if (!value)
-        return NULL;
+        return 0;
     
     ret = decode_varint64(src, &u, limit);
     *value = zigzagToI64(u);

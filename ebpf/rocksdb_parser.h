@@ -12,7 +12,7 @@
 #define int32_t __s32
 #define int8_t __s8
 #define bool short
-#define NULL 0
+//#define NULL 0
 #define true 1
 #define false 0
 #else
