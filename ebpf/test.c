@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
 
-    //print_block_handle(&ctx.handle);
+    print_block_handle(&ctx.handle);
 
     free(data_buf);
     free(scratch_buf);

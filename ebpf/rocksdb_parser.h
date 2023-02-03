@@ -156,8 +156,9 @@ union varint_context {
 };
 
 struct index_parse_context {
-    char prev_index_key[MAX_KEY_LEN + 1];
+    unsigned char prev_index_key[MAX_KEY_LEN + 1];
     struct block_handle prev_data_handle;
+    uint32_t index_offset;
 };
 
 struct rocksdb_ebpf_context {
