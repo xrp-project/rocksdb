@@ -105,6 +105,11 @@ int main(int argc, char **argv) {
     printf("Return: %ld\n", ret);
     printf("%s\n", strerror(errno));
 
+
+    if (ret < 0)
+        die("read_xrp() failed");
+
+
     if ((out_fd = open("outfile", O_RDWR | O_CREAT | O_TRUNC, 0666)) == -1)
         die("open() failed");
 
@@ -113,7 +118,10 @@ int main(int argc, char **argv) {
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
 
-    print_block_handle(&ctx.handle);
+    if (ctx.found == 1)
+        print_block_handle(&ctx.handle);
+    else
+        printf("Value not found\n");
 
     free(data_buf);
     free(scratch_buf);
