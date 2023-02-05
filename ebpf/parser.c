@@ -107,14 +107,6 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
     return ret;
 }
 
-#undef bpf_printk
-#define bpf_printk(fmt, ...)                            \
-({                                                      \
-        static const char ____fmt[] = fmt;              \
-        bpf_trace_printk(____fmt, sizeof(____fmt),      \
-                         ##__VA_ARGS__);                \
-})
-
 __noinline int strncmp(const char * s1, const char * s2, unsigned long n) {
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
