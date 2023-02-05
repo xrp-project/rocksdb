@@ -1,6 +1,6 @@
 LLC ?= llc
 CLANG ?= clang
-CC ?= gcc
+CC = gcc
 
 BPF_CFLAGS ?= -I$(LIBBPF_DIR)/build/usr/
 CFLAGS = -g -Wall -Wpedantic -std=c17 -I/usr/aarch64-linux-gnu/include/
