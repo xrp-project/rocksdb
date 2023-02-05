@@ -142,6 +142,7 @@ struct footer {
 
 // eBPF program
 #define MAX_KEY_LEN 63
+#define MAX_VALUE_LEN 255
 
 enum parse_stage {
     kFooterStage = 0x0,
@@ -161,6 +162,13 @@ struct index_parse_context {
     uint32_t index_offset;
 };
 
+struct data_parse_context {
+    unsigned char prev_data_key[MAX_KEY_LEN + 1];
+    unsigned char value[MAX_VALUE_LEN + 1];
+    uint32_t data_offset;
+    enum value_type vt;
+};
+
 struct rocksdb_ebpf_context {
     uint32_t footer_len;
     enum parse_stage stage;
@@ -168,7 +176,10 @@ struct rocksdb_ebpf_context {
     char key[MAX_KEY_LEN + 1];
     struct block_handle handle;
     union varint_context varint_context;
-    struct index_parse_context index_context;
+    union {
+        struct index_parse_context index_context;
+        struct data_parse_context data_context;
+    };
 };
 
 #endif // _EBPF_ROCKSDB_PARSER_H_

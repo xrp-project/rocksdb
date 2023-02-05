@@ -135,21 +135,166 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t n = MAX_KEY_LEN;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     char *user_key = rocksdb_ctx->key;
-    char *index_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
+    char *block_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
 
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
     
-    while ( n && *user_key && ( *user_key == *index_key ) ) {
+    while ( n && *user_key && ( *user_key == *block_key ) ) {
         ++user_key;
-        ++index_key;
+        ++block_key;
         --n;
     }
     if ( n == 0 ) {
         return 0;
     } else {
-        return *(unsigned char *)user_key - *(unsigned char *)index_key;
+        return *(unsigned char *)user_key - *(unsigned char *)block_key;
     }
+}
+
+__noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
+    volatile uint32_t shared_size, non_shared_size, value_length;
+    uint32_t varint_return;
+    unsigned char *data_key = context->scratch + sizeof(struct rocksdb_ebpf_context);
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint8_t *data_block = context->data;
+    uint64_t packed_type_seq, seq;
+    enum value_type vt;
+
+    memset(data_key, 0, MAX_KEY_LEN + 1);
+
+    varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
+    if (varint_return == 0)
+        return -EBPF_EINVAL;
+
+    data_offset += varint_return;
+    shared_size = rocksdb_ctx->varint_context.varint32;
+    bpf_printk("shared size: %u\n", shared_size);
+
+    varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
+    if (varint_return == 0)
+        return -EBPF_EINVAL;
+
+    data_offset += varint_return;
+    non_shared_size = rocksdb_ctx->varint_context.varint32;
+    bpf_printk("non-shared size: %u\n", non_shared_size);
+
+    varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
+    if (varint_return == 0)
+        return -EBPF_EINVAL;
+
+    data_offset += varint_return;
+    value_length = rocksdb_ctx->varint_context.varint32;
+    bpf_printk("value length: %u\n", value_length);
+
+    // Remove internal footer from key
+    non_shared_size -= kNumInternalBytes;
+
+    if (shared_size > 0) {
+        for (int i = 0; i < (shared_size & MAX_KEY_LEN); i++) {
+            data_key[i] = rocksdb_ctx->data_context.prev_data_key[i];
+        }
+    }
+
+    if (shared_size > MAX_KEY_LEN || non_shared_size > MAX_KEY_LEN)
+        return -EBPF_EINVAL;
+
+    if (data_offset > EBPF_DATA_BUFFER_SIZE - MAX_KEY_LEN)
+        return -EBPF_EINVAL;
+
+    for (int i = 0; i < (non_shared_size & MAX_KEY_LEN); i++) {
+        (data_key + (shared_size & MAX_KEY_LEN))[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
+    }
+
+    data_key[(shared_size + non_shared_size) & MAX_KEY_LEN] = '\0';
+    bpf_printk("Data key: %s\n", data_key);
+
+    for (int i = 0; i < (((shared_size + non_shared_size ) & MAX_KEY_LEN) + 1); i++) {
+        rocksdb_ctx->data_context.prev_data_key[i] = data_key[i];
+    }
+
+    data_offset += non_shared_size & MAX_KEY_LEN;
+
+    if (strncmp_key(context) != 0) { // key not equal, continue
+        data_offset += kNumInternalBytes + value_length;
+        rocksdb_ctx->data_context.data_offset = data_offset;
+        bpf_printk("key not equal\n");
+        return 0;
+    }
+
+    if (data_offset > EBPF_DATA_BUFFER_SIZE - sizeof(uint64_t))
+        return -EBPF_EINVAL;
+
+    packed_type_seq = *(uint64_t *)(data_block + ((data_offset & (EBPF_DATA_BUFFER_SIZE - 1))));
+    unpack_sequence_and_type(packed_type_seq, &seq, &vt);
+
+    rocksdb_ctx->data_context.vt = vt;
+
+    data_offset += kNumInternalBytes;
+
+    for (int i = 0; i < (value_length & MAX_VALUE_LEN) + 1; i++) {
+        rocksdb_ctx->data_context.value[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
+    }
+
+    return 1;
+
+}
+
+__noinline int parse_data_block(struct bpf_xrp *context, uint32_t data_block_offset) {
+    uint8_t *data_block, index_type;
+    uint32_t num_restarts, data_end, *block_footer, data_offset = data_block_offset, block_end_offset;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    volatile uint32_t fake_var = 0;
+    int loop_ret, loop_counter = 0, found = 0;
+    const int LOOP_COUNTER_THRESH = 2000;
+
+    if (data_block_offset > EBPF_BLOCK_SIZE || data_block_offset < 0)
+        return -EBPF_EINVAL;
+
+    data_block = context->data;
+
+    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE / 2 + kBlockTrailerSize + BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
+        return -EBPF_EINVAL;
+
+    block_end_offset = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+
+    block_end_offset += fake_var; // prevent compiler from optimizing away bounds check
+
+    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
+        return -EBPF_EINVAL;
+
+    block_footer = (uint32_t *)(data_block + block_end_offset);
+
+    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
+        return -EBPF_EINVAL;
+
+    block_footer = (uint32_t *)(data_block + block_end_offset);
+
+    unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
+
+    data_end = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+
+    while (data_offset < data_end && data_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
+        loop_ret = data_block_loop(context, data_offset);
+        data_offset = rocksdb_ctx->data_context.data_offset;
+
+        loop_counter++;
+        bpf_printk("data offset: %u\n", data_offset);
+        bpf_printk("loop counter data block: %d\n", loop_counter);
+        bpf_printk("loop ret: %d\n", loop_ret);
+
+        if (loop_ret < 0)
+            return loop_ret;
+        else if (loop_ret == 0)
+            continue;
+        else if (loop_ret == 1) {
+            found = 1;
+            break;
+        }
+    }
+
+    return found;
+
 }
 
 __noinline int index_block_loop(struct bpf_xrp *context, uint32_t index_offset) {
@@ -193,7 +338,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint32_t index_offset) 
     }
 
     index_key[(shared_size + non_shared_size) & MAX_KEY_LEN] = '\0';
-    bpf_printk("Index key: %s\n", index_key);
+    //bpf_printk("Index key: %s\n", index_key);
 
     for (int i = 0; i < (((shared_size + non_shared_size ) & MAX_KEY_LEN) + 1); i++) {
         rocksdb_ctx->index_context.prev_index_key[i] = index_key[i];
@@ -247,12 +392,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
     uint8_t *index_block, index_type;
     int loop_ret, loop_counter = 0, found = 0;
     const int LOOP_COUNTER_THRESH = 2000;
-    const uint8_t *index_iter;
     uint32_t num_restarts, index_end, *block_footer, index_offset = index_block_offset, block_end_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     volatile uint32_t fake_var = 0;
 
-    bpf_printk("index_block_offset: %u\n", index_block_offset);
+    //bpf_printk("index_block_offset: %u\n", index_block_offset);
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
     // index_type = kBinarySearch and index_key_is_user_key
@@ -261,8 +405,6 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
         return -EBPF_EINVAL;
 
     index_block = context->data;
-
-    index_iter = index_block;
 
     if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE / 2 + kBlockTrailerSize + BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
@@ -277,14 +419,14 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
     block_footer = (uint32_t *)(index_block + block_end_offset);
 
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
-    bpf_printk("num_restarts: %u\n", num_restarts);
+    //bpf_printk("num_restarts: %u\n", num_restarts);
     // TODO: check index type
 
     index_end = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
-    bpf_printk("rocksdb_ctx->handle.size: %lu\n", rocksdb_ctx->handle.size);
-    bpf_printk("index_offset: %u\n", index_offset);
-    bpf_printk("index_end: %u\n", index_end);
+    //bpf_printk("rocksdb_ctx->handle.size: %lu\n", rocksdb_ctx->handle.size);
+    //bpf_printk("index_offset: %u\n", index_offset);
+    //bpf_printk("index_end: %u\n", index_end);
 
     while (index_offset < index_end && index_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = index_block_loop(context, index_offset);
@@ -302,7 +444,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
         }
     }
 
-    bpf_printk("loop counter: %d\n", loop_counter);
+    //bpf_printk("loop counter: %d\n", loop_counter);
 
     memcpy(&rocksdb_ctx->handle, &rocksdb_ctx->index_context.prev_data_handle, sizeof(struct block_handle));
 
@@ -427,10 +569,9 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
 
         ret = parse_index_block(context, rocksdb_ctx->footer_len);
 
-        if (ret == 0) // not found
+        if (ret != 1) // not found
             rocksdb_ctx->found = 0;
-        else if (ret == 1) {
-            rocksdb_ctx->found = 1;
+        else {
             context->next_addr[0] = (rocksdb_ctx->handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
             rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0];
             context->size[0] = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
@@ -439,6 +580,8 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         }
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
+        ret = parse_data_block(context, rocksdb_ctx->footer_len);
+        rocksdb_ctx->found = ret == 1;
     } else {
         return -EBPF_EINVAL;
     }
