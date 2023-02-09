@@ -26,4 +26,4 @@ parser.o: parser.c rocksdb_parser.h data_block_footer.h ebpf.h
 all: test parser.o
 
 clean:
-	rm -f *.o test
+	rm -f -- *.o *.ll test

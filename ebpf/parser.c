@@ -80,6 +80,7 @@ __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offs
     for (uint8_t shift = 0; shift <= 27; shift += VARINT_SHIFT) {
         unsigned char byte = *(data_buffer + offset + counter);
         counter++;
+        bpf_printk("byte: %u\n", byte);
 
         if (byte & VARINT_MSB) {
             result |= ((byte & (VARINT_MSB - 1)) << shift);
@@ -162,6 +163,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += varint_return;
     shared_size = rocksdb_ctx->varint_context.varint32;
     bpf_printk("shared size: %u\n", shared_size);
+    bpf_printk("varint return: %u\n", varint_return);
 
     varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
     if (varint_return == 0)
@@ -170,6 +172,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += varint_return;
     non_shared_size = rocksdb_ctx->varint_context.varint32;
     bpf_printk("non-shared size: %u\n", non_shared_size);
+    bpf_printk("varint return: %u\n", varint_return);
 
     varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
     if (varint_return == 0)
@@ -178,6 +181,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += varint_return;
     value_length = rocksdb_ctx->varint_context.varint32;
     bpf_printk("value length: %u\n", value_length);
+    bpf_printk("varint return: %u\n", varint_return);
 
     // Remove internal footer from key
     non_shared_size -= kNumInternalBytes;
@@ -523,8 +527,8 @@ __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
     handle += varint_return;
     footer.index_handle.size = rocksdb_ctx->varint_context.varint64;
 
-    bpf_printk("Offset: %ld\n", footer.index_handle.offset);
-    bpf_printk("Size: %ld\n", footer.index_handle.size);
+    bpf_printk("Index block offset: %ld\n", footer.index_handle.offset);
+    bpf_printk("Index block size: %ld\n", footer.index_handle.size);
 
     memcpy(&rocksdb_ctx->handle, &footer.index_handle, sizeof(struct block_handle));
     rocksdb_ctx->stage = kIndexStage;
@@ -533,7 +537,7 @@ __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
     context->next_addr[0] = (footer.index_handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
     //bpf_printk("Next addr: %d\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = footer.index_handle.offset - context->next_addr[0];
-    context->size[0] = rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
+    context->size[0] = EBPF_DATA_BUFFER_SIZE; //rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
     context->done = false;
 
     return 0;
@@ -543,9 +547,9 @@ SEC("prog")
 __u32 rocksdb_lookup(struct bpf_xrp *context) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     enum parse_stage stage = rocksdb_ctx->stage;
-    bpf_printk("Parse stage: %d\n", stage);
-
     int ret = 0;
+
+    bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
         int32_t footer_offset = rocksdb_ctx->footer_len - MAX_FOOTER_LEN;
@@ -565,8 +569,10 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
             rocksdb_ctx->found = 0;
         else {
             context->next_addr[0] = (rocksdb_ctx->handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-            rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0];
-            context->size[0] = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
+            rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
+            context->size[0] = EBPF_DATA_BUFFER_SIZE; //rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
+            bpf_printk("data block size: %llu\n", context->size[0]);
+            bpf_printk("data block offset: %llu\n", rocksdb_ctx->footer_len);
             context->done = false;
             return 0;
         }

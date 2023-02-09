@@ -105,15 +105,13 @@ int main(int argc, char **argv) {
     printf("Return: %ld\n", ret);
     printf("%s\n", strerror(errno));
 
-
     if (ret < 0)
         die("read_xrp() failed");
-
 
     if ((out_fd = open("outfile", O_RDWR | O_CREAT | O_TRUNC, 0666)) == -1)
         die("open() failed");
 
-    if (write(out_fd, scratch_buf, EBPF_SCRATCH_BUFFER_SIZE) == -1)
+    if (write(out_fd, data_buf, EBPF_DATA_BUFFER_SIZE) == -1)
         die("write() failed");
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
