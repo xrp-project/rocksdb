@@ -108,22 +108,6 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
     return ret;
 }
 
-__noinline int strncmp(const char * s1, const char * s2, unsigned long n) {
-    if (n > MAX_KEY_LEN + 1)
-        return -1; // should never happen
-
-    while ( n && *s1 && ( *s1 == *s2 ) ) {
-        ++s1;
-        ++s2;
-        --n;
-    }
-    if ( n == 0 ) {
-        return 0;
-    } else {
-        return *(unsigned char *)s1 - *(unsigned char *)s2;
-    }
-}
-
 __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t n = MAX_KEY_LEN;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -233,7 +217,6 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     }
 
     return 1;
-
 }
 
 __noinline int parse_data_block(struct bpf_xrp *context, uint32_t data_block_offset) {
@@ -290,7 +273,6 @@ __noinline int parse_data_block(struct bpf_xrp *context, uint32_t data_block_off
     }
 
     return found;
-
 }
 
 __noinline int index_block_loop(struct bpf_xrp *context, uint32_t index_offset) {
