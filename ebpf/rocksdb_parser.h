@@ -28,7 +28,7 @@
 #define MAX_BLOCK_HANDLE_LEN (2 * MAX_VARINT64_LEN) // kMaxEncodedLength = 2 * kMaxVarint64Length
 
 // kNewVersionsEncodedLength = 1 + 2 * BlockHandle::kMaxEncodedLength + 4 + kMagicNumberLengthByte. Version 1+
-#define FOOTER_LEN (CHECKSUM_LEN + 2 * MAX_BLOCK_HANDLE_LEN + VERSION_LEN + MAGIC_NUM_LEN)
+#define FOOTER_LEN (CHECKSUM_LEN + 2 * MAX_BLOCK_HANDLE_LEN + VERSION_LEN + MAGIC_NUM_LEN) // 53 bytes
 #define LEGACY_FOOTER_LEN (2 * MAX_BLOCK_HANDLE_LEN + MAGIC_NUM_LEN)
 #define MAX_FOOTER_LEN FOOTER_LEN // new footer > legacy footer
 
@@ -170,7 +170,7 @@ struct data_parse_context {
 };
 
 struct rocksdb_ebpf_context {
-    uint32_t footer_len;
+    uint64_t footer_len;
     enum parse_stage stage;
     int found;
     char key[MAX_KEY_LEN + 1];

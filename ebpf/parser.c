@@ -80,7 +80,7 @@ __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offs
     for (uint8_t shift = 0; shift <= 27; shift += VARINT_SHIFT) {
         unsigned char byte = *(data_buffer + offset + counter);
         counter++;
-        bpf_printk("byte: %u\n", byte);
+        //bpf_printk("byte: %u\n", byte);
 
         if (byte & VARINT_MSB) {
             result |= ((byte & (VARINT_MSB - 1)) << shift);
@@ -212,9 +212,11 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
 
     data_offset += kNumInternalBytes;
 
-    for (int i = 0; i < (value_length & MAX_VALUE_LEN) + 1; i++) {
+    for (int i = 0; i < (value_length & MAX_VALUE_LEN); i++) {
         rocksdb_ctx->data_context.value[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
     }
+
+    rocksdb_ctx->data_context.value[(value_length & MAX_VALUE_LEN)] = '\0';
 
     return 1;
 }
@@ -430,7 +432,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
     return found;
 }
 
-__noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
+__noinline int parse_footer(struct bpf_xrp *context, uint64_t footer_offset) {
     uint8_t *footer_ptr;
     const uint8_t *handle, *footer_iter;
     uint32_t varint_return;
@@ -443,9 +445,16 @@ __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
     footer_ptr = context->data + footer_offset;
     footer_iter = footer_ptr;
 
+    /*for (int i = 0; i < MAX_FOOTER_LEN; i++)
+        bpf_printk("%x\n", *(footer_iter + i));
+
+    bpf_printk("\n");*/
+
+    //bpf_printk("magic number offset: %u\n", footer_offset + MAX_FOOTER_LEN - MAGIC_NUM_LEN);
     // read magic number
     footer_iter += MAX_FOOTER_LEN - MAGIC_NUM_LEN;
     footer.magic_number = *(uint64_t *)footer_iter;
+    //bpf_printk("Magic number: %lx\n", *(uint64_t *)footer_iter);
 
     if (footer.magic_number == BLOCK_MAGIC_NUMBER) {
         // read version
@@ -517,7 +526,7 @@ __noinline int parse_footer(struct bpf_xrp *context, int32_t footer_offset) {
 
     // need previous multiple of 512
     context->next_addr[0] = (footer.index_handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-    //bpf_printk("Next addr: %d\n", context->next_addr[0]);
+    bpf_printk("Index block offset: %d\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = footer.index_handle.offset - context->next_addr[0];
     context->size[0] = EBPF_DATA_BUFFER_SIZE; //rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
     context->done = false;
@@ -534,9 +543,11 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
-        int32_t footer_offset = rocksdb_ctx->footer_len - MAX_FOOTER_LEN;
+        uint64_t footer_offset = rocksdb_ctx->footer_len - MAX_FOOTER_LEN;
 
-        //bpf_printk("Footer offset: %d\n", footer_offset);
+        //bpf_printk("Footer offset: %u\n", footer_offset);
+
+        //bpf_printk("First bytes: %lu\n", *(uint64_t *)context->data);
 
         ret = parse_footer(context, footer_offset);
 
@@ -551,6 +562,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
             rocksdb_ctx->found = 0;
         else {
             context->next_addr[0] = (rocksdb_ctx->handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+            bpf_printk("Address for data block: %llu\n", context->next_addr[0]);
             rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
             context->size[0] = EBPF_DATA_BUFFER_SIZE; //rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
             bpf_printk("data block size: %llu\n", context->size[0]);
@@ -562,6 +574,8 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         bpf_printk("Data stage\n");
         ret = parse_data_block(context, rocksdb_ctx->footer_len);
         rocksdb_ctx->found = ret == 1;
+        if (ret == 1)
+            ret = 0;
     } else {
         return -EBPF_EINVAL;
     }

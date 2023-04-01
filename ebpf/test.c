@@ -71,31 +71,42 @@ int main(int argc, char **argv) {
     if (fstat(sst_fd, &st) == -1)
         die("fstat() failed");
 
-    offset = (MAX(1, (st.st_size / EBPF_BLOCK_SIZE)) - 1) * EBPF_BLOCK_SIZE;
+    offset = ((st.st_size - MAX_FOOTER_LEN) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+    // (MAX(1, (st.st_size / EBPF_BLOCK_SIZE)) - 1) * EBPF_BLOCK_SIZE;
     //offset = st.st_size - MAX_FOOTER_LEN;
-    printf("offset: %ld\n", offset);
+    printf("footer offset (aligned to 512): %ld\n", offset);
 
-    // use madvise to ask for transparent huge page
-    if (posix_memalign((void **) &data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
+    /*if (posix_memalign((void **) &data_buf, 4096, EBPF_DATA_BUFFER_SIZE) != 0)
         die("posix_memalign() failed");
+    */
 
-    if (madvise(data_buf, EBPF_DATA_BUFFER_SIZE, MADV_HUGEPAGE) != 0)
-        die("madvise(..., MADV_HUGEPAGE) failed");
+    data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
+    if (!data_buf)
+        die("aligned_alloc() failed");
 
     /*data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
     if (!data_buf)
         die("aligned_alloc() failed");
     */
 
-    scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
+    // use madvise to ask for transparent huge page
+    if (posix_memalign((void **) &scratch_buf, huge_page_size, EBPF_SCRATCH_BUFFER_SIZE) != 0)
+        die("posix_memalign() failed");
+
+    if (madvise(scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, MADV_HUGEPAGE) != 0)
+        die("madvise(..., MADV_HUGEPAGE) failed");
+
+    /*scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
     if (!scratch_buf)
         die("aligned_alloc() failed");
+    */
 
     memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.footer_len = st.st_size - offset;
+    printf("Footer len: %lu\n", ctx.footer_len);
     ctx.stage = kFooterStage;
     strncpy((char *)&ctx.key, key, strlen(key));
     memcpy(scratch_buf, &ctx, sizeof(ctx));
@@ -117,7 +128,8 @@ int main(int argc, char **argv) {
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
 
     if (ctx.found == 1)
-        print_block_handle(&ctx.handle);
+        //print_block_handle(&ctx.handle);
+        printf("Value found: %s\n", ctx.data_context.value);
     else
         printf("Value not found\n");
 
