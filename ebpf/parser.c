@@ -576,7 +576,7 @@ __noinline int copy_block(struct bpf_xrp *context) {
     int i, ret;
 
     for (i = 0; i < EBPF_DATA_BUFFER_SIZE; i++) {
-        *(context->scratch + (((data_copy_context->nr_pages + INITIAL_SCRATCH_DATA_PAGE) * EBPF_DATA_BUFFER_SIZE + i) & EBPF_SCRATCH_BUFFER_SIZE)) = context->data[i];
+        *(context->scratch + (((data_copy_context->nr_pages + INITIAL_SCRATCH_DATA_PAGE) * EBPF_DATA_BUFFER_SIZE + i) & (EBPF_SCRATCH_BUFFER_SIZE - 1))) = context->data[i];
     }
 
     if (data_copy_context->size_remaining <= EBPF_DATA_BUFFER_SIZE) {
