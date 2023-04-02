@@ -15,6 +15,9 @@
 #include "ebpf.h"
 #include "rocksdb_parser.h"
 
+#define MAP_HUGE_2MB    (21 << MAP_HUGE_SHIFT)
+#define MAP_HUGE_1GB    (30 << MAP_HUGE_SHIFT)
+
 static void die(const char *message) {
     perror(message);
     exit(1); 
@@ -76,18 +79,28 @@ int main(int argc, char **argv) {
     //offset = st.st_size - MAX_FOOTER_LEN;
     printf("footer offset (aligned to 512): %ld\n", offset);
 
-    /*if (posix_memalign((void **) &data_buf, 4096, EBPF_DATA_BUFFER_SIZE) != 0)
+    /*data_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON, -1, 0);
+    if (data_buf == MAP_FAILED)
+        die("mmap() failed");*/
+
+    if (posix_memalign((void **) &data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
         die("posix_memalign() failed");
-    */
 
     data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
     if (!data_buf)
         die("aligned_alloc() failed");
 
+    scratch_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON, -1, 0);
+    if (scratch_buf == MAP_FAILED)
+        die("mmap() failed");
+
+    /*scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
+    if (!scratch_buf)
+        die("aligned_alloc() failed");*/
+
     /*data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
     if (!data_buf)
         die("aligned_alloc() failed");
-    */
 
     // use madvise to ask for transparent huge page
     if (posix_memalign((void **) &scratch_buf, huge_page_size, EBPF_SCRATCH_BUFFER_SIZE) != 0)
@@ -95,11 +108,7 @@ int main(int argc, char **argv) {
 
     if (madvise(scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, MADV_HUGEPAGE) != 0)
         die("madvise(..., MADV_HUGEPAGE) failed");
-
-    /*scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
-    if (!scratch_buf)
-        die("aligned_alloc() failed");
-    */
+*/
 
     memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
@@ -134,7 +143,8 @@ int main(int argc, char **argv) {
         printf("Value not found\n");
 
     free(data_buf);
-    free(scratch_buf);
+    //munmap(data_buf, huge_page_size);
+    munmap(scratch_buf, huge_page_size);
 
     close(out_fd);
     close(sst_fd);

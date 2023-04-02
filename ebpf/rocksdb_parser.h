@@ -17,7 +17,10 @@
 #define false 0
 #else
 #include <stdint.h>
+#include <stdbool.h>
 #endif
+
+#define PAGE_SIZE 4096
 
 // Footer member sizes
 #define CHECKSUM_LEN 1
@@ -38,6 +41,8 @@
 #define BLOCK_MAGIC_NUMBER 0x88e241b785f4cff7ull // kBlockBasedTableMagicNumber
 #define LEGACY_BLOCK_MAGIC_NUMBER 0xdb4775248b80fb57ull // kLegacyBlockBasedTableMagicNumber
 #define NULL_BLOCK_MAGIC_NUMBER 0
+
+#define ROCKSDB_BLOCK_SIZE 4096
 
 // Checksum parsing
 enum checksum_type {
@@ -156,6 +161,18 @@ union varint_context {
     int64_t varsigned64;
 };
 
+#define COPY_DONE 0
+#define COPY_MORE 1
+
+#define INITIAL_SCRATCH_DATA_PAGE 1
+
+struct data_copy_context {
+    uint64_t initial_offset;
+    uint64_t total_size;
+    uint64_t size_remaining;
+    uint64_t nr_pages;
+};
+
 struct index_parse_context {
     unsigned char prev_index_key[MAX_KEY_LEN + 1];
     struct block_handle prev_data_handle;
@@ -172,10 +189,13 @@ struct data_parse_context {
 struct rocksdb_ebpf_context {
     uint64_t footer_len;
     enum parse_stage stage;
-    int found;
+    bool found;
+    bool copy_data;
     char key[MAX_KEY_LEN + 1];
+    char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
     struct block_handle handle;
     union varint_context varint_context;
+    struct data_copy_context data_copy_context;
     union {
         struct index_parse_context index_context;
         struct data_parse_context data_context;
