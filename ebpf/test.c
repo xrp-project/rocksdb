@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     if (!data_buf)
         die("aligned_alloc() failed");
 
-    scratch_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON, -1, 0);
+    scratch_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0);
     if (scratch_buf == MAP_FAILED)
         die("mmap() failed");
 
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
 
-    if (ctx.found == 1)
+    if (ctx.found == true)
         //print_block_handle(&ctx.handle);
         printf("Value found: %s\n", ctx.data_context.value);
     else
