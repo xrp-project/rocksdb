@@ -189,8 +189,8 @@ struct data_parse_context {
 struct rocksdb_ebpf_context {
     uint64_t footer_len;
     enum parse_stage stage;
-    bool found;
-    bool copy_data;
+    int found;
+    int copy_data;
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
     struct block_handle handle;

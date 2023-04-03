@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.footer_len = st.st_size - offset;
-    printf("Footer len: %lu\n", ctx.footer_len);
+    //printf("Footer len: %lu\n", ctx.footer_len);
     ctx.stage = kFooterStage;
     strncpy((char *)&ctx.key, key, strlen(key));
     memcpy(scratch_buf, &ctx, sizeof(ctx));
@@ -131,13 +131,12 @@ int main(int argc, char **argv) {
     if ((out_fd = open("outfile", O_RDWR | O_CREAT | O_TRUNC, 0666)) == -1)
         die("open() failed");
 
-    if (write(out_fd, data_buf, EBPF_DATA_BUFFER_SIZE) == -1)
+    if (write(out_fd, scratch_buf, EBPF_SCRATCH_BUFFER_SIZE) == -1)
         die("write() failed");
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
 
-    if (ctx.found == true)
-        //print_block_handle(&ctx.handle);
+    if (ctx.found == 1)
         printf("Value found: %s\n", ctx.data_context.value);
     else
         printf("Value not found\n");
