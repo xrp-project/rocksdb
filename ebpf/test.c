@@ -11,12 +11,10 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/bpf.h>
+#include <linux/mman.h>
 
 #include "ebpf.h"
 #include "rocksdb_parser.h"
-
-#define MAP_HUGE_2MB    (21 << MAP_HUGE_SHIFT)
-#define MAP_HUGE_1GB    (30 << MAP_HUGE_SHIFT)
 
 static void die(const char *message) {
     perror(message);

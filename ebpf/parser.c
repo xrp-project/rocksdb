@@ -1,6 +1,5 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_core_read.h>
 
 #include "data_block_footer.h"
 #include "rocksdb_parser.h"
