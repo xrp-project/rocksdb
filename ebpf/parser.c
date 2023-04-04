@@ -264,6 +264,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset, in
     unpack_sequence_and_type(packed_type_seq, &seq, &vt);
 
     rocksdb_ctx->data_context.vt = vt;
+    rocksdb_ctx->data_context.seq = seq;
 
     data_offset += kNumInternalBytes;
 

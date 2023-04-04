@@ -184,6 +184,7 @@ struct data_parse_context {
     unsigned char value[MAX_VALUE_LEN + 1];
     uint32_t data_offset;
     enum value_type vt;
+    uint64_t seq;
 };
 
 struct rocksdb_ebpf_context {
