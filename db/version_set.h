@@ -62,6 +62,8 @@
 #include "util/coro_utils.h"
 #include "util/hash_containers.h"
 
+#include "xrp/xrp_context.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 namespace log {
@@ -846,7 +848,8 @@ class Version {
            PinnedIteratorsManager* pinned_iters_mgr,
            bool* value_found = nullptr, bool* key_exists = nullptr,
            SequenceNumber* seq = nullptr, ReadCallback* callback = nullptr,
-           bool* is_blob = nullptr, bool do_merge = true);
+           bool* is_blob = nullptr, bool do_merge = true,
+           XRPContext *xrp = nullptr);
 
   void MultiGet(const ReadOptions&, MultiGetRange* range,
                 ReadCallback* callback = nullptr);

@@ -1,5 +1,6 @@
 # These are the sources from which librocksdb.a is built:
 LIB_SOURCES =                                                   \
+  xrp/xrp_context.cc                                            \
   cache/cache.cc                                                \
   cache/cache_entry_roles.cc                                    \
   cache/cache_key.cc                                            \

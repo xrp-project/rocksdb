@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <iostream>
+
 #include "db/blob/blob_fetcher.h"
 #include "db/blob/blob_file_cache.h"
 #include "db/blob/blob_file_reader.h"
@@ -72,6 +74,8 @@
 #include "util/stop_watch.h"
 #include "util/string_util.h"
 #include "util/user_comparator_wrapper.h"
+
+#include "db/table_cache.h"
 
 // Generate the regular and coroutine versions of some methods by
 // including version_set_sync_and_async.h twice
@@ -2244,17 +2248,23 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   SequenceNumber* max_covering_tombstone_seq,
                   PinnedIteratorsManager* pinned_iters_mgr, bool* value_found,
                   bool* key_exists, SequenceNumber* seq, ReadCallback* callback,
-                  bool* is_blob, bool do_merge) {
+                  bool* is_blob, bool do_merge, XRPContext* xrp) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
+  XRPContext xrp_local("/home/jer/rocksdb/ebpf/parser.o");
+
+  if (xrp == nullptr)
+    assert(status->ok() || status->IsMergeInProgress());
 
   assert(status->ok() || status->IsMergeInProgress());
+
+  std::cout << std::string(user_key.data_) << std::endl;
 
   if (key_exists != nullptr) {
     // will falsify below if not found
     *key_exists = true;
   }
-
+std::cout << "before tracing" << std::endl;
   uint64_t tracing_get_id = BlockCacheTraceHelper::kReservedGetId;
   if (vset_ && vset_->block_cache_tracer_ &&
       vset_->block_cache_tracer_->is_tracing_enabled()) {
@@ -2268,6 +2278,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   bool* const is_blob_to_use = is_blob ? is_blob : &is_blob_index;
   BlobFetcher blob_fetcher(this, read_options);
 
+  std::cout << "before get context" << std::endl;
   assert(pinned_iters_mgr);
   GetContext get_context(
       user_comparator(), merge_operator_, info_log_, db_statistics_,
@@ -2289,7 +2300,10 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
+  std::cout << "before loop" << std::endl;
+
   while (f != nullptr) {
+    std::cout << "in f loop" << std::endl;
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
       // stop here.
@@ -2303,18 +2317,35 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
         GetPerfLevel() >= PerfLevel::kEnableTimeExceptForMutex &&
         get_perf_context()->per_level_perf_context_enabled;
     StopWatchNano timer(clock_, timer_enabled /* auto_start */);
-    *status = table_cache_->Get(
-        read_options, *internal_comparator(), *f->file_metadata, ikey,
-        &get_context, mutable_cf_options_.prefix_extractor,
-        cfd_->internal_stats()->GetFileReadHist(fp.GetHitFileLevel()),
-        IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),
-                        fp.IsHitFileLastInLevel()),
-        fp.GetHitFileLevel(), max_file_size_for_l0_meta_pin_);
+
+
+    auto& fd = f->file_metadata->fd;
+    TableReader* t = fd.table_reader;
+    Cache::Handle* handle = nullptr;
+
+    if (t == nullptr) {
+      *status = table_cache_->FindTable(read_options, file_options_, *internal_comparator(), *f->file_metadata,
+                    &handle, mutable_cf_options_.prefix_extractor,
+                    read_options.read_tier == kBlockCacheTier /* no_io */,
+                    true /* record_read_stats */, cfd_->internal_stats()->GetFileReadHist(fp.GetHitFileLevel()), IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),
+                    fp.IsHitFileLastInLevel()), fp.GetHitFileLevel(),true /* prefetch_index_and_filter_in_cache */,
+                    max_file_size_for_l0_meta_pin_, f->file_metadata->temperature);
+      if (status->ok()) {
+        t = table_cache_->GetTableReaderFromHandle(handle);
+      }
+    }
+
+    BlockBasedTable *bbt = static_cast<BlockBasedTable *>(t);
+    Slice *s = dynamic_cast<Slice *>(value);
+    std::cout << "Pre-do_xrp" << std::endl;
+    *status = xrp_local.do_xrp(*bbt, user_key, *s, &get_context, key_exists);
+ 
     // TODO: examine the behavior for corrupted key
     if (timer_enabled) {
       PERF_COUNTER_BY_LEVEL_ADD(get_from_table_nanos, timer.ElapsedNanos(),
                                 fp.GetHitFileLevel());
     }
+    
     if (!status->ok()) {
       if (db_statistics_ != nullptr) {
         get_context.ReportCounters();

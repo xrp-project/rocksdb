@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <string>
+#include <iostream>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -28,23 +29,35 @@ int main() {
   DB* db;
   Options options;
   // Optimize RocksDB. This is the easiest way to get RocksDB to perform well
-  options.IncreaseParallelism();
-  options.OptimizeLevelStyleCompaction();
+  //options.IncreaseParallelism(1);
+  //options.OptimizeLevelStyleCompaction();
   // create the DB if it's not already present
   options.create_if_missing = true;
+  options.compression = rocksdb::CompressionType::kNoCompression;
 
   // open DB
   Status s = DB::Open(options, kDBPath, &db);
   assert(s.ok());
-
-  // Put key-value
-  s = db->Put(WriteOptions(), "key1", "value");
-  assert(s.ok());
   std::string value;
   // get value
-  s = db->Get(ReadOptions(), "key1", &value);
+
+  //s = db->Put(WriteOptions(), "key2", "value");
+  //assert(s.ok());
+
+  s = db->Get(ReadOptions(), "key2", &value);
+  std::cout << s.ToString() << std::endl;
+
   assert(s.ok());
   assert(value == "value");
+
+
+
+  
+
+/*
+  // Put key-value
+  //
+  assert(s.ok());
 
   // atomically apply a set of updates
   {
@@ -53,7 +66,8 @@ int main() {
     batch.Put("key2", value);
     s = db->Write(WriteOptions(), &batch);
   }
-
+*/
+/*
   s = db->Get(ReadOptions(), "key1", &value);
   assert(s.IsNotFound());
 
@@ -86,8 +100,6 @@ int main() {
   assert(pinnable_val == "value");
   pinnable_val.Reset();
   // The Slice pointed by pinnable_val is not valid after this point
-
-  delete db;
-
+*/
   return 0;
 }

@@ -2,25 +2,25 @@
 #include <unistd.h>
 #include <sys/mman.h>
 
-#include <bpf/libbpf.h>
-#include <linux/bpf.h>
-#include <linux/mman.h>
-
-#include <table/block_based/block_based_table_reader.h>
-#include <db/dbformat.h>
-#include <env/io_posix.h>
-
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
-#include "ebpf.h"
-#include "rocksdb_parser.h"
+#include <bpf/libbpf.h>
+#include <linux/bpf.h>
+#include <linux/mman.h>
+
+#include <db/dbformat.h>
+#include <env/io_posix.h>
+#include <table/format.h>
+#include <table/block_based/block_based_table_reader.h>
+
 #include "xrp_context.h"
 
 namespace ROCKSDB_NAMESPACE {
 
 XRPContext::XRPContext(const std::string &ebpf_program) {
+    std::cout << "Creating XRPContext" << std::endl;
     bpf_fd = load_bpf_program(ebpf_program.c_str());
 
     if (posix_memalign((void **)&data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
@@ -37,6 +37,7 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
 }
 
 XRPContext::~XRPContext() {
+    std::cout << "Destroying XRPContext" << std::endl;
     free(data_buf);
     munmap(scratch_buf, huge_page_size);
     close(bpf_fd);
@@ -59,13 +60,15 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
 
     struct rocksdb_ebpf_context *ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
     const BlockBasedTable::Rep *rep = sst.get_rep();
-    PosixRandomAccessFile *file = dynamic_cast<PosixRandomAccessFile *>(rep->file->file());
+    PosixRandomAccessFile *file = static_cast<PosixRandomAccessFile *>(rep->file->file());
 
     if (!file)
         throw std::runtime_error("file does not exist");
 
     sst_fd = file->GetFd();
-    offset = ((rep->file_size - MAX_FOOTER_LEN) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+
+    std::cout << "fd = " << sst_fd << std::endl;
+    offset = ((rep->file_size - Footer::kMaxEncodedLength) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
 
     std::cout << "footer offset (aligned to 512): " << offset << std::endl;
 
@@ -75,11 +78,11 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     if (key.size() > MAX_KEY_LEN)
         return Status::InvalidArgument();
 
-    memset(&ctx, 0, sizeof(ctx));
     ctx->footer_len = rep->file_size - offset;
     ctx->stage = kFooterStage;
     strncpy(ctx->key, key.data(), key.size());
-    memcpy(scratch_buf, &ctx, sizeof(ctx));
+
+    std::cout << "key = " << ctx->key << std::endl;
 
     long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
 
@@ -87,6 +90,7 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
         s = Status::Corruption();
 
     if (ctx->found == 1) {
+        std::cout << "val = " << ctx->data_context.value << std::endl;
         ValueType v = static_cast<ValueType>(ctx->data_context.vt);
         ParsedInternalKey internal_key = ParsedInternalKey(key, ctx->data_context.seq, v);
 

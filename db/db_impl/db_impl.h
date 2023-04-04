@@ -69,6 +69,8 @@
 #include "util/stop_watch.h"
 #include "util/thread_local.h"
 
+#include "xrp/xrp_context.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 class Arena;
@@ -611,6 +613,7 @@ class DBImpl : public DB {
     PinnableSlice* merge_operands = nullptr;
     GetMergeOperandsOptions* get_merge_operands_options = nullptr;
     int* number_of_operands = nullptr;
+    XRPContext *xrp = nullptr;
   };
 
   // Function that Get and KeyMayExist call with no_io true or false
