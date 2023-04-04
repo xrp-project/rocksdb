@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -23,8 +24,14 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
     std::cout << "Creating XRPContext" << std::endl;
     bpf_fd = load_bpf_program(ebpf_program.c_str());
 
+    std::cout << "load_bpf_program: " << strerror(errno) << std::endl;
+
     if (posix_memalign((void **)&data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
         throw std::runtime_error("posix_memalign() failed");
+
+    data_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE));
+    if (!data_buf)
+        throw std::runtime_error("alligned_alloc() failed");
 
     scratch_buf = static_cast<uint8_t *>(mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE,
                                   MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0));
@@ -83,8 +90,11 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     strncpy(ctx->key, key.data(), key.size());
 
     std::cout << "key = " << ctx->key << std::endl;
+    std::cout << "key size = " << key.size() << std::endl;
 
     long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
+    std::cout << "ret = " << ret << std::endl;
+    std::cout << "read_xrp: " << strerror(errno) << std::endl;
 
     if (ret < 0)
         s = Status::Corruption();
