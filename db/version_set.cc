@@ -2251,7 +2251,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   bool* is_blob, bool do_merge, XRPContext* xrp) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
-  XRPContext xrp_local("/home/jer/rocksdb/ebpf/parser.o");
+  XRPContext xrp_local("/home/jezuss/xrp/rocksdb/ebpf/parser.o");
 
   if (xrp == nullptr)
     assert(status->ok() || status->IsMergeInProgress());
