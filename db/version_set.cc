@@ -2251,20 +2251,17 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   bool* is_blob, bool do_merge, XRPContext* xrp) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
-  XRPContext xrp_local("/home/jezuss/xrp/rocksdb/ebpf/parser.o");
+  XRPContext xrp_local("/mydata/rocksdb/ebpf/parser.o");
 
   if (xrp == nullptr)
     assert(status->ok() || status->IsMergeInProgress());
 
   assert(status->ok() || status->IsMergeInProgress());
 
-  std::cout << std::string(user_key.data_) << std::endl;
-
   if (key_exists != nullptr) {
     // will falsify below if not found
     *key_exists = true;
   }
-std::cout << "before tracing" << std::endl;
   uint64_t tracing_get_id = BlockCacheTraceHelper::kReservedGetId;
   if (vset_ && vset_->block_cache_tracer_ &&
       vset_->block_cache_tracer_->is_tracing_enabled()) {
@@ -2278,7 +2275,6 @@ std::cout << "before tracing" << std::endl;
   bool* const is_blob_to_use = is_blob ? is_blob : &is_blob_index;
   BlobFetcher blob_fetcher(this, read_options);
 
-  std::cout << "before get context" << std::endl;
   assert(pinned_iters_mgr);
   GetContext get_context(
       user_comparator(), merge_operator_, info_log_, db_statistics_,
@@ -2300,10 +2296,7 @@ std::cout << "before tracing" << std::endl;
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
-  std::cout << "before loop" << std::endl;
-
   while (f != nullptr) {
-    std::cout << "in f loop" << std::endl;
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
       // stop here.
@@ -2337,8 +2330,9 @@ std::cout << "before tracing" << std::endl;
 
     BlockBasedTable *bbt = static_cast<BlockBasedTable *>(t);
     Slice *s = dynamic_cast<Slice *>(value);
-    std::cout << "Pre-do_xrp" << std::endl;
-    *status = xrp_local.do_xrp(*bbt, user_key, *s, &get_context, key_exists);
+
+    bool matched;
+    *status = xrp_local.do_xrp(*bbt, user_key, *s, &get_context, &matched);
  
     // TODO: examine the behavior for corrupted key
     if (timer_enabled) {

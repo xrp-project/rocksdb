@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <string>
 #include <iostream>
+#include <unistd.h>
 
 #include "rocksdb/db.h"
 #include "rocksdb/slice.h"
@@ -34,6 +35,7 @@ int main() {
   // create the DB if it's not already present
   options.create_if_missing = true;
   options.compression = rocksdb::CompressionType::kNoCompression;
+  options.use_direct_reads = true;
 
   // open DB
   Status s = DB::Open(options, kDBPath, &db);
@@ -49,6 +51,7 @@ int main() {
 
   assert(s.ok());
   assert(value == "value");
+
 
 
 

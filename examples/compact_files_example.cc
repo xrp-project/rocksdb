@@ -179,7 +179,6 @@ int main() {
   }
 
   // close the db.
-  delete db;
 
   return 0;
 }
