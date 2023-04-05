@@ -60,7 +60,7 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     uint64_t offset;
     Status s = Status::OK();
 
-    struct rocksdb_ebpf_context ctx = {};
+    struct rocksdb_ebpf_context *ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
     const BlockBasedTable::Rep *rep = sst.get_rep();
     PosixRandomAccessFile *file = static_cast<PosixRandomAccessFile *>(rep->file->file());
 
@@ -77,24 +77,22 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     if (key.size() > MAX_KEY_LEN)
         return Status::InvalidArgument();
 
-    ctx.footer_len = rep->file_size - offset;
-    ctx.stage = kFooterStage;
-    strncpy(ctx.key, key.data(), key.size());
-    memcpy(scratch_buf, &ctx, sizeof(ctx));
-    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
+    ctx->footer_len = rep->file_size - offset;
+    ctx->stage = kFooterStage;
+    strncpy(ctx->key, key.data(), key.size());
 
-    ctx = *(rocksdb_ebpf_context *)scratch_buf;
+    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
 
     if (ret < 0)
         s = Status::Corruption();
 
-    if (ctx.found == 1) {
-        ValueType v = static_cast<ValueType>(ctx.data_context.vt);
-        ParsedInternalKey internal_key = ParsedInternalKey(key, ctx.data_context.seq, v);
+    if (ctx->found == 1) {
+        ValueType v = static_cast<ValueType>(ctx->data_context.vt);
+        ParsedInternalKey internal_key = ParsedInternalKey(key, ctx->data_context.seq, v);
 
         if (v == kTypeValue) {
-            value.data_ = reinterpret_cast<const char *>(ctx.data_context.value);
-            value.size_ = strlen(reinterpret_cast<const char *>(ctx.data_context.value));
+            value.data_ = reinterpret_cast<const char *>(ctx->data_context.value);
+            value.size_ = strlen(reinterpret_cast<const char *>(ctx->data_context.value));
             
             get_context->SaveValue(internal_key, value, matched);
         }

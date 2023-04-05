@@ -2251,8 +2251,6 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   ReadCallback* callback, bool* is_blob, bool do_merge) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
-  if (xrp == nullptr)
-    assert(status->ok() || status->IsMergeInProgress());
 
   assert(status->ok() || status->IsMergeInProgress());
 
