@@ -149,6 +149,11 @@ void DumpSupportInfo(Logger* logger) {
 
   ROCKS_LOG_HEADER(logger, "DMutex implementation: %s", DMutex::kName());
 }
+
+void XRPContextUnrefHandle(void* ptr) {
+  XRPContext *xrp = static_cast<XRPContext *>(ptr);
+  delete xrp;
+}
 }  // namespace
 
 DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
@@ -183,6 +188,7 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
       batch_per_txn_(batch_per_txn),
       next_job_id_(1),
       shutting_down_(false),
+      thread_local_xrp_context_(new ThreadLocalPtr(&XRPContextUnrefHandle)),
       db_lock_(nullptr),
       manual_compaction_paused_(false),
       bg_cv_(&mutex_),
@@ -294,6 +300,10 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
                             std::memory_order_relaxed);
   if (write_buffer_manager_) {
     wbm_stall_.reset(new WBMStallInterface());
+  }
+
+  if (thread_local_xrp_context_->Get() == nullptr) {
+    thread_local_xrp_context_->Reset(new XRPContext(std::string("/mydata/rocksdb/ebpf/parser.o")));
   }
 }
 
@@ -2136,11 +2146,12 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         read_options, lkey, get_impl_options.value, get_impl_options.columns,
         timestamp, &s, &merge_context, &max_covering_tombstone_seq,
         &pinned_iters_mgr,
+        static_cast<XRPContext *>(thread_local_xrp_context_->Get()),
         get_impl_options.get_value ? get_impl_options.value_found : nullptr,
         nullptr, nullptr,
         get_impl_options.get_value ? get_impl_options.callback : nullptr,
         get_impl_options.get_value ? get_impl_options.is_blob_index : nullptr,
-        get_impl_options.get_value, get_impl_options.xrp);
+        get_impl_options.get_value);
     RecordTick(stats_, MEMTABLE_MISS);
   }
 
@@ -2385,7 +2396,9 @@ std::vector<Status> DBImpl::MultiGet(
       super_version->current->Get(read_options, lkey, &pinnable_val,
                                   /*columns=*/nullptr, timestamp, &s,
                                   &merge_context, &max_covering_tombstone_seq,
-                                  &pinned_iters_mgr, /*value_found=*/nullptr,
+                                  &pinned_iters_mgr,
+                                  static_cast<XRPContext *>(thread_local_xrp_context_->Get()),
+                                  /*value_found=*/nullptr,
                                   /*key_exists=*/nullptr,
                                   /*seq=*/nullptr, read_callback);
       value->assign(pinnable_val.data(), pinnable_val.size());
@@ -5093,9 +5106,9 @@ Status DBImpl::GetLatestSequenceForKey(
     PinnedIteratorsManager pinned_iters_mgr;
     sv->current->Get(read_options, lkey, /*value=*/nullptr, /*columns=*/nullptr,
                      timestamp, &s, &merge_context, &max_covering_tombstone_seq,
-                     &pinned_iters_mgr, nullptr /* value_found */,
-                     found_record_for_key, seq, nullptr /*read_callback*/,
-                     is_blob_index);
+                     &pinned_iters_mgr, static_cast<XRPContext *>(thread_local_xrp_context_->Get()),
+                     nullptr /* value_found */, found_record_for_key, seq,
+                     nullptr /*read_callback*/, is_blob_index);
 
     if (!(s.ok() || s.IsNotFound() || s.IsMergeInProgress())) {
       // unexpected error reading SST files

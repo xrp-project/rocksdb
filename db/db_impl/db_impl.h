@@ -1327,6 +1327,8 @@ class DBImpl : public DB {
 
   std::atomic<bool> shutting_down_;
 
+  std::unique_ptr<ThreadLocalPtr> thread_local_xrp_context_;
+
   // RecoveryContext struct stores the context about version edits along
   // with corresponding column_family_data and column_family_options.
   class RecoveryContext {

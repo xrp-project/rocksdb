@@ -420,6 +420,7 @@ Status DBImplSecondary::GetImpl(const ReadOptions& read_options,
     super_version->current->Get(
         read_options, lkey, pinnable_val, /*columns=*/nullptr, ts, &s,
         &merge_context, &max_covering_tombstone_seq, &pinned_iters_mgr,
+        static_cast<XRPContext *>(thread_local_xrp_context_->Get()),
         /*value_found*/ nullptr,
         /*key_exists*/ nullptr, /*seq*/ nullptr, &read_cb, /*is_blob*/ nullptr,
         /*do_merge*/ true);

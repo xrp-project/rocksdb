@@ -845,11 +845,10 @@ class Version {
            PinnableWideColumns* columns, std::string* timestamp, Status* status,
            MergeContext* merge_context,
            SequenceNumber* max_covering_tombstone_seq,
-           PinnedIteratorsManager* pinned_iters_mgr,
+           PinnedIteratorsManager* pinned_iters_mgr, XRPContext *xrp,
            bool* value_found = nullptr, bool* key_exists = nullptr,
            SequenceNumber* seq = nullptr, ReadCallback* callback = nullptr,
-           bool* is_blob = nullptr, bool do_merge = true,
-           XRPContext *xrp = nullptr);
+           bool* is_blob = nullptr, bool do_merge = true);
 
   void MultiGet(const ReadOptions&, MultiGetRange* range,
                 ReadCallback* callback = nullptr);

@@ -23,8 +23,6 @@
 namespace ROCKSDB_NAMESPACE {
 
 XRPContext::XRPContext(const std::string &ebpf_program) {
-    std::cout << "Loading XRPContext" << std::endl;
-
     bpf_fd = load_bpf_program(ebpf_program.c_str());
 
     data_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE));
@@ -42,7 +40,6 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
 }
 
 XRPContext::~XRPContext() {
-    std::cout << "Destroying XRPContext" << std::endl;
     free(data_buf);
     munmap(scratch_buf, huge_page_size);
     close(bpf_fd);

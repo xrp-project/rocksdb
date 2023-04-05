@@ -2246,13 +2246,11 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   std::string* timestamp, Status* status,
                   MergeContext* merge_context,
                   SequenceNumber* max_covering_tombstone_seq,
-                  PinnedIteratorsManager* pinned_iters_mgr, bool* value_found,
-                  bool* key_exists, SequenceNumber* seq, ReadCallback* callback,
-                  bool* is_blob, bool do_merge, XRPContext* xrp) {
+                  PinnedIteratorsManager* pinned_iters_mgr, XRPContext* xrp,
+                  bool* value_found, bool* key_exists, SequenceNumber* seq,
+                  ReadCallback* callback, bool* is_blob, bool do_merge) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
-  XRPContext xrp_local("/mydata/rocksdb/ebpf/parser.o");
-
   if (xrp == nullptr)
     assert(status->ok() || status->IsMergeInProgress());
 
@@ -2332,7 +2330,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     Slice *s = dynamic_cast<Slice *>(value);
 
     bool matched;
-    *status = xrp_local.do_xrp(*bbt, user_key, *s, &get_context, &matched);
+    *status = xrp->do_xrp(*bbt, user_key, *s, &get_context, &matched);
  
     // TODO: examine the behavior for corrupted key
     if (timer_enabled) {
