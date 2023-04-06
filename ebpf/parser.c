@@ -494,8 +494,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, uint32_t index_block_o
 
     for (int i = 0; i < LOOP_COUNTER_THRESH; i++) {
         loop_ret = parse_index_block_loop(context, index_block_offset, use_data_buffer, num_restarts, &found);
-        if (loop_ret < 0 || found)
+        if (loop_ret < 0)
+            return loop_ret;
+        if (found)
             break;
+
 
         index_block_offset = rocksdb_ctx->index_context.index_offset;
     }
