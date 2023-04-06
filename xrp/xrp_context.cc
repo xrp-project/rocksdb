@@ -65,7 +65,7 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     PosixRandomAccessFile *file = static_cast<PosixRandomAccessFile *>(rep->file->file());
 
     if (!file)
-        throw std::runtime_error("file does not exist");
+        s = Status::PathNotFound("sst file not found");
 
     sst_fd = file->GetFd();
 
@@ -83,6 +83,7 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
 
     long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
 
+
     if (ret < 0)
         s = Status::Corruption();
 
@@ -93,11 +94,8 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
         if (v == kTypeValue) {
             value.data_ = reinterpret_cast<const char *>(ctx->data_context.value);
             value.size_ = strlen(reinterpret_cast<const char *>(ctx->data_context.value));
-            
-            get_context->SaveValue(internal_key, value, matched);
         }
-    } else {
-        s = Status::NotFound();
+        get_context->SaveValue(internal_key, value, matched);
     }
 
     return s;

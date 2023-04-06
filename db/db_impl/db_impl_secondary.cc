@@ -417,6 +417,11 @@ Status DBImplSecondary::GetImpl(const ReadOptions& read_options,
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
     PinnedIteratorsManager pinned_iters_mgr;
+
+    if (thread_local_xrp_context_->Get() == nullptr) {
+      thread_local_xrp_context_->Reset(new XRPContext(std::string("/mydata/rocksdb/ebpf/parser.o")));
+    }
+
     super_version->current->Get(
         read_options, lkey, pinnable_val, /*columns=*/nullptr, ts, &s,
         &merge_context, &max_covering_tombstone_seq, &pinned_iters_mgr,

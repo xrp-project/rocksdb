@@ -2142,6 +2142,11 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   PinnedIteratorsManager pinned_iters_mgr;
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
+
+    if (thread_local_xrp_context_->Get() == nullptr) {
+      thread_local_xrp_context_->Reset(new XRPContext(std::string("/mydata/rocksdb/ebpf/parser.o")));
+    }
+
     sv->current->Get(
         read_options, lkey, get_impl_options.value, get_impl_options.columns,
         timestamp, &s, &merge_context, &max_covering_tombstone_seq,
@@ -2393,6 +2398,11 @@ std::vector<Status> DBImpl::MultiGet(
       PinnableSlice pinnable_val;
       PERF_TIMER_GUARD(get_from_output_files_time);
       PinnedIteratorsManager pinned_iters_mgr;
+
+      if (thread_local_xrp_context_->Get() == nullptr) {
+        thread_local_xrp_context_->Reset(new XRPContext(std::string("/mydata/rocksdb/ebpf/parser.o")));
+      }
+
       super_version->current->Get(read_options, lkey, &pinnable_val,
                                   /*columns=*/nullptr, timestamp, &s,
                                   &merge_context, &max_covering_tombstone_seq,
@@ -5104,6 +5114,11 @@ Status DBImpl::GetLatestSequenceForKey(
   if (!cache_only) {
     // Check tables
     PinnedIteratorsManager pinned_iters_mgr;
+
+    if (thread_local_xrp_context_->Get() == nullptr) {
+      thread_local_xrp_context_->Reset(new XRPContext(std::string("/mydata/rocksdb/ebpf/parser.o")));
+    }
+
     sv->current->Get(read_options, lkey, /*value=*/nullptr, /*columns=*/nullptr,
                      timestamp, &s, &merge_context, &max_covering_tombstone_seq,
                      &pinned_iters_mgr, static_cast<XRPContext *>(thread_local_xrp_context_->Get()),

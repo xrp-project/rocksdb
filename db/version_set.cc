@@ -2307,11 +2307,10 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
         get_perf_context()->per_level_perf_context_enabled;
     StopWatchNano timer(clock_, timer_enabled /* auto_start */);
 
-
     auto& fd = f->file_metadata->fd;
     TableReader* t = fd.table_reader;
     Cache::Handle* handle = nullptr;
-
+    
     if (t == nullptr) {
       *status = table_cache_->FindTable(read_options, file_options_, *internal_comparator(), *f->file_metadata,
                     &handle, mutable_cf_options_.prefix_extractor,
@@ -2329,7 +2328,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
     bool matched;
     *status = xrp->do_xrp(*bbt, user_key, *s, &get_context, &matched);
- 
+
     // TODO: examine the behavior for corrupted key
     if (timer_enabled) {
       PERF_COUNTER_BY_LEVEL_ADD(get_from_table_nanos, timer.ElapsedNanos(),
