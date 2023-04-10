@@ -25,14 +25,14 @@ namespace ROCKSDB_NAMESPACE {
 XRPContext::XRPContext(const std::string &ebpf_program) {
     bpf_fd = load_bpf_program(ebpf_program.c_str());
 
-    data_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE));
-    if (!data_buf)
-        throw std::runtime_error("alligned_alloc() failed");
+    scratch_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE));
+    if (!scratch_buf)
+        throw std::runtime_error("aligned_alloc() failed");
 
-    scratch_buf = static_cast<uint8_t *>(mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE,
+    data_buf = static_cast<uint8_t *>(mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE,
                                   MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0));
 
-    if (scratch_buf == MAP_FAILED)
+    if (data_buf == MAP_FAILED)
         throw std::runtime_error("mmap() failed");
 
     memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
@@ -40,8 +40,10 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
 }
 
 XRPContext::~XRPContext() {
-    free(data_buf);
-    munmap(scratch_buf, huge_page_size);
+    free(scratch_buf);
+    if (munmap(data_buf, huge_page_size) != 0)
+        fprintf(stdout, "XRPContext: failed to munmap %p length %lu\n", data_buf, huge_page_size);
+
     close(bpf_fd);
 }
 
@@ -81,7 +83,7 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     ctx->stage = kFooterStage;
     strncpy(ctx->key, key.data(), key.size());
 
-    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
+    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
 
 
     if (ret < 0)

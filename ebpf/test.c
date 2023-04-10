@@ -16,6 +16,8 @@
 #include "ebpf.h"
 #include "rocksdb_parser.h"
 
+const size_t huge_page_size = 1UL << 21UL;
+
 static void die(const char *message) {
     perror(message);
     exit(1); 
@@ -49,7 +51,6 @@ int main(int argc, char **argv) {
     uint64_t offset;
     struct stat st;
     struct rocksdb_ebpf_context ctx;
-    const size_t huge_page_size = 1 << 21;
 
     if (argc != 3) {
         printf("usage: ./test <sst-file> <key>\n");
@@ -73,52 +74,26 @@ int main(int argc, char **argv) {
         die("fstat() failed");
 
     offset = ((st.st_size - MAX_FOOTER_LEN) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-    // (MAX(1, (st.st_size / EBPF_BLOCK_SIZE)) - 1) * EBPF_BLOCK_SIZE;
-    //offset = st.st_size - MAX_FOOTER_LEN;
     printf("footer offset (aligned to 512): %ld\n", offset);
 
-    /*data_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON, -1, 0);
+    data_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0);
     if (data_buf == MAP_FAILED)
-        die("mmap() failed");*/
-
-    if (posix_memalign((void **) &data_buf, huge_page_size, EBPF_DATA_BUFFER_SIZE) != 0)
-        die("posix_memalign() failed");
-
-    data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
-    if (!data_buf)
-        die("aligned_alloc() failed");
-
-    scratch_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (scratch_buf == MAP_FAILED)
         die("mmap() failed");
 
-    /*scratch_buf = aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE);
-    if (!scratch_buf)
-        die("aligned_alloc() failed");*/
-
-    /*data_buf = aligned_alloc(EBPF_DATA_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE);
-    if (!data_buf)
-        die("aligned_alloc() failed");
-
-    // use madvise to ask for transparent huge page
-    if (posix_memalign((void **) &scratch_buf, huge_page_size, EBPF_SCRATCH_BUFFER_SIZE) != 0)
+    if (posix_memalign((void **) &scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE) != 0)
         die("posix_memalign() failed");
-
-    if (madvise(scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, MADV_HUGEPAGE) != 0)
-        die("madvise(..., MADV_HUGEPAGE) failed");
-*/
 
     memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 
     memset(&ctx, 0, sizeof(ctx));
     ctx.footer_len = st.st_size - offset;
-    //printf("Footer len: %lu\n", ctx.footer_len);
+    printf("Footer len: %lu\n", ctx.footer_len);
     ctx.stage = kFooterStage;
     strncpy((char *)&ctx.key, key, strlen(key));
     memcpy(scratch_buf, &ctx, sizeof(ctx));
 
-    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, EBPF_DATA_BUFFER_SIZE, offset, bpf_fd, scratch_buf);
+    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
 
     printf("Return: %ld\n", ret);
     printf("%s\n", strerror(errno));
@@ -129,7 +104,7 @@ int main(int argc, char **argv) {
     if ((out_fd = open("outfile", O_RDWR | O_CREAT | O_TRUNC, 0666)) == -1)
         die("open() failed");
 
-    if (write(out_fd, scratch_buf, EBPF_SCRATCH_BUFFER_SIZE) == -1)
+    if (write(out_fd, data_buf, EBPF_DATA_BUFFER_SIZE) == -1)
         die("write() failed");
 
     ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
@@ -139,9 +114,10 @@ int main(int argc, char **argv) {
     else
         printf("Value not found\n");
 
-    free(data_buf);
-    //munmap(data_buf, huge_page_size);
-    munmap(scratch_buf, huge_page_size);
+    if (munmap(data_buf, EBPF_DATA_BUFFER_SIZE) != 0)
+        fprintf(stderr, "failed to munmap %p length %lu\n", data_buf, EBPF_DATA_BUFFER_SIZE);
+
+    free(scratch_buf);
 
     close(out_fd);
     close(sst_fd);
