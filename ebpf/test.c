@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     ctx.footer_len = st.st_size - offset;
     printf("Footer len: %lu\n", ctx.footer_len);
     ctx.stage = kFooterStage;
-    strncpy((char *)&ctx.key, key, strlen(key));
+    strncpy((char *)&ctx.key, key, strlen(key) + 1);
     memcpy(scratch_buf, &ctx, sizeof(ctx));
 
     long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);

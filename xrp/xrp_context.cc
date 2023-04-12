@@ -81,10 +81,9 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
 
     ctx->footer_len = rep->file_size - offset;
     ctx->stage = kFooterStage;
-    strncpy(ctx->key, key.data(), key.size());
+    strncpy(ctx->key, key.data(), key.size()); // key.data() is not null-terminated, beware
 
     long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
-
 
     if (ret < 0)
         s = Status::Corruption();

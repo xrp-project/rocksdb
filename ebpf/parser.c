@@ -258,8 +258,13 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
         }
     }
 
-    if (loop_counter >= LOOP_COUNTER_THRESH || data_offset >= data_end)
+    if (loop_counter >= LOOP_COUNTER_THRESH)
         return -EBPF_EINVAL;
+
+    if (data_offset >= data_end || data_offset >= EBPF_DATA_BUFFER_SIZE) {
+        bpf_printk("data offset >= data_end\n");
+        return 0; // not found
+    }
 
     return found;
 }
@@ -366,7 +371,6 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
     while (index_ptr_offset < index_end && index_ptr_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = index_block_loop(context, index_ptr_offset);
         index_ptr_offset = rocksdb_ctx->index_context.index_offset;
-        bpf_printk("In loop: index_ptr_offset: %lu\n", index_ptr_offset);
 
         loop_counter++;
 
@@ -414,7 +418,6 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     block_footer = (uint32_t *)(index_block + block_end_offset);
 
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
-    //bpf_printk("num_restarts: %u\n", num_restarts);
     // TODO: check index type
 
     index_end = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
@@ -432,8 +435,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
         index_offset = rocksdb_ctx->index_context.index_offset;
     }
 
-    if (i >= LOOP_COUNTER_THRESH || index_offset >= index_end)
+    if (i >= LOOP_COUNTER_THRESH)
         return -EBPF_EINVAL;
+
+    if (index_offset >= index_end)
+        return 0; // not found
 
     memcpy(&rocksdb_ctx->handle, &rocksdb_ctx->index_context.prev_data_handle, sizeof(struct block_handle));
 
@@ -466,7 +472,6 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
 
     // read magic number
     footer.magic_number = *(uint64_t *)(footer_ptr + footer_ptr_offset);
-    //bpf_printk("Magic number: %lx\n", *(uint64_t *)footer_iter);
 
     if (footer.magic_number == BLOCK_MAGIC_NUMBER) {
         // read version
