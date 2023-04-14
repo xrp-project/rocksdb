@@ -449,7 +449,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     bpf_printk("Address for data block: %llu\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
     data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
-    context->size[0] = round_up(data_size, PAGE_SIZE);
+    context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
     bpf_printk("data block size: %llu\n", context->size[0]);
     bpf_printk("data block offset: %llu\n", rocksdb_ctx->footer_len);
     context->done = false;
@@ -544,7 +544,7 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
     bpf_printk("Index block offset: %d\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = footer.index_handle.offset - context->next_addr[0];
     index_size = rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
-    context->size[0] = round_up(index_size, PAGE_SIZE);
+    context->size[0] = __ALIGN_KERNEL(index_size, PAGE_SIZE);
 
     context->done = false;
 
@@ -574,7 +574,7 @@ __noinline void next_sst_file(struct bpf_xrp *context) {
     data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
     context->cur_fd = context->fd_arr[rocksdb_ctx->file_array.array[curr_idx].fd];
     context->next_addr[0] = round_down(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
-    context->size[0] = round_up(data_size, PAGE_SIZE);
+    context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
     context->done = false;
 }
 

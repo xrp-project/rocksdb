@@ -2172,7 +2172,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
 
   bool hasFilter = false;
   bool hasData = false;
-  bool hasIndex = false;
+  //bool hasIndex = false;
 
   // First check the full filter
   // If full filter not useful, Then go into each block
@@ -2207,7 +2207,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
 
   if (!iiter->status().IsIncomplete()) {
     // We were able to look up the index block, start parsing at data block
-    hasIndex = true;
+    //hasIndex = true;
   }
 
   std::unique_ptr<InternalIteratorBase<IndexValue>> iiter_unique_ptr;
@@ -2215,8 +2215,6 @@ Status BlockBasedTable::CacheGet(const Slice& key,
     iiter_unique_ptr.reset(iiter);
   }
 
-  uint64_t data_block_size;
-  uint64_t data_block_offset;
   size_t ts_sz =
       rep_->internal_comparator.user_comparator()->timestamp_size();
   bool matched = false;  // if such user key matched a key in SST
@@ -2234,11 +2232,12 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       break;
     }
 
-    data_block_size = v.handle.size();
-    data_block_offset = v.handle.offset();
+    xrp_file->bytes_to_read = v.handle.size();
+    xrp_file->offset = v.handle.offset();
+    xrp_file->stage = kDataStage;
 
-    std::cout << data_block_size << std::endl;
-    std::cout << data_block_offset << std::endl;
+    std::cout << "size = " << xrp_file->bytes_to_read << std::endl;
+    std::cout << "offset = " << xrp_file->offset << std::endl;
 
     BlockCacheLookupContext lookup_data_block_context{
         TableReaderCaller::kUserGet, tracing_get_id,
@@ -2321,11 +2320,6 @@ Status BlockBasedTable::CacheGet(const Slice& key,
     xrp_file->fd = -1; // very bad implementation atm
   }
  
-  if (hasIndex) { 
-    xrp_file->bytes_to_read = data_block_size; //TODO-XRP: maybe data_block_size - offset?
-    xrp_file->offset = data_block_offset;
-  }
-
   return s;
 }
 

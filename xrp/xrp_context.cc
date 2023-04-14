@@ -59,12 +59,12 @@ int XRPContext::load_bpf_program(const char *path) {
 Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched) {
     Status s = Status::OK();
 
-    if (key.size() > MAX_KEY_LEN || ctx->files.count == 0)
+    if (key.size() > MAX_KEY_LEN || ctx->file_array.count == 0)
         return Status::InvalidArgument();
 
     strncpy(ctx->key, key.data(), key.size());
 
-    struct file_context start_file = ctx->files.array[0];
+    struct file_context start_file = ctx->file_array.array[0];
     ctx->footer_len = start_file.footer_len;
     ctx->stage = start_file.stage; // TODO: change when using block cache
 
@@ -98,6 +98,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     BlockHandle index_handle;
     uint64_t offset, size, footer_len;
     uint32_t sst_fd;
+    enum parse_stage stage;
 
     // hack -- if we want to skip file, fd is set to -1.
     if (cache_file.fd == (uint32_t)-1) {
@@ -110,14 +111,14 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
         
     sst_fd = file->GetFd();
 
-    struct file_context *file_ctx = ctx->files.array + ctx->files.count++;
+    struct file_context *file_ctx = ctx->file_array.array + ctx->file_array.count++;
 
     index_handle = rep->footer.index_handle();
 
     offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
     footer_len = index_handle.offset() - offset;
 
-    } if (cache_file.stage == kDataStage) {
+    if (cache_file.stage == kDataStage) {
         offset = cache_file.offset;
         size = cache_file.bytes_to_read;
         stage = cache_file.stage;

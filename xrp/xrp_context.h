@@ -13,7 +13,7 @@ namespace ROCKSDB_NAMESPACE {
 
 #define SYS_READ_XRP 445
 
-#define EBPF_PARSER_PATH "/mydata/rocksdb_tal/ebpf/parser.o"
+#define EBPF_PARSER_PATH "/mydata/tal_rocksdb/ebpf/parser.o"
 
 // Value types encoded as the last component of internal keys
 // Incomplete list, see db/dbformat.h
@@ -62,18 +62,6 @@ struct file_array {
     struct file_context array[16];
     uint8_t curr_idx;
     uint8_t count;
-};
-
-enum parse_stage {
-    kFooterStage = 0x0,
-    kIndexStage = 0x1,
-    kDataStage = 0x2
-};
-
-union varint_context {
-    uint64_t varint64;
-    uint32_t varint32;
-    int64_t varsigned64;
 };
 
 struct index_parse_context {

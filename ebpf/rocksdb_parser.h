@@ -19,6 +19,8 @@
 #include <stdint.h>
 #endif
 
+#include <linux/const.h>
+
 #define PAGE_SIZE 4096
 
 // Footer member sizes
@@ -174,22 +176,6 @@ struct data_parse_context {
     uint64_t seq;
 };
 
-struct rocksdb_ebpf_context {
-    uint64_t footer_len;
-    enum parse_stage stage;
-    int found;
-    char key[MAX_KEY_LEN + 1];
-    char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
-    struct block_handle handle; // need to set this from userspace!
-    union varint_context varint_context;
-    union {
-        struct index_parse_context index_context;
-        struct data_parse_context data_context;
-    };
-    struct file_array file_array;
-};
-
-
 // The RocksDB context contains an array of file_context. Each file_context
 // corresponds to an SST file we need to check.
 // - The stage field indicates how much of the file we have already parsed
@@ -210,9 +196,21 @@ struct file_array {
     uint8_t count;
 };
 
-static inline int round_up(int x, int alignment) {
-    return __ALIGN_KERNEL(x, alignment);
-}
+struct rocksdb_ebpf_context {
+    uint64_t footer_len;
+    enum parse_stage stage;
+    int found;
+    char key[MAX_KEY_LEN + 1];
+    char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
+    struct block_handle handle; // need to set this from userspace!
+    union varint_context varint_context;
+    union {
+        struct index_parse_context index_context;
+        struct data_parse_context data_context;
+    };
+    struct file_array file_array;
+};
+
 
 static inline int round_down(int x, int alignment) {
     return (x / alignment) * alignment;
