@@ -609,8 +609,10 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         rocksdb_ctx->found = ret == 1;
         if (ret == 1)
             ret = 0;
-        if (!rocksdb_ctx->found)
+        if (!rocksdb_ctx->found){
             next_sst_file(context);
+            return 0;
+        }
     } else {
         return -EBPF_EINVAL;
     }
