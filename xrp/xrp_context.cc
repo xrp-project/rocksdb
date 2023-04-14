@@ -59,8 +59,9 @@ int XRPContext::load_bpf_program(const char *path) {
 
 Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &value, GetContext *get_context, bool *matched) {
     int sst_fd;
-    uint64_t offset;
+    uint64_t offset, size;
     Status s = Status::OK();
+    BlockHandle index_handle;
 
     struct rocksdb_ebpf_context *ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
     const BlockBasedTable::Rep *rep = sst.get_rep();
@@ -69,21 +70,25 @@ Status XRPContext::do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &v
     if (!file)
         s = Status::PathNotFound("sst file not found");
 
-    sst_fd = file->GetFd();
+    if (key.size() > MAX_KEY_LEN)
+        return Status::InvalidArgument();
 
-    offset = ((rep->file_size - Footer::kMaxEncodedLength) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+    sst_fd = file->GetFd();
+    index_handle = rep->footer.index_handle();
+
+    offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
 
     memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 
-    if (key.size() > MAX_KEY_LEN)
-        return Status::InvalidArgument();
-
-    ctx->footer_len = rep->file_size - offset;
-    ctx->stage = kFooterStage;
+    ctx->footer_len = index_handle.offset() - offset;
+    ctx->stage = kIndexStage;
+    ctx->handle = {.offset = index_handle.offset(), .size = index_handle.size() };
     strncpy(ctx->key, key.data(), key.size()); // key.data() is not null-terminated, beware
+    size = ctx->footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
+    size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); // align to PAGE_SIZE
 
-    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
+    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, size, offset, bpf_fd, scratch_buf);
 
     if (ret < 0)
         s = Status::Corruption();
