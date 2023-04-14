@@ -98,6 +98,12 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     BlockHandle index_handle;
     uint64_t offset, size, footer_len;
     uint32_t sst_fd;
+
+    // hack -- if we want to skip file, fd is set to -1.
+    if (cache_file.fd == (uint32_t)-1) {
+        return;
+    }
+
     PosixRandomAccessFile *file = static_cast<PosixRandomAccessFile *>(rep->file->file());
     if (!file)
         throw std::runtime_error("SST file not found");
@@ -111,19 +117,19 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
     footer_len = index_handle.offset() - offset;
 
-    if (cache_file.stage == kIndexStage) {
-        size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
-        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
-    } else if (cache_file.stage == kDataStage) {
+    } if (cache_file.stage == kDataStage) {
         offset = cache_file.offset;
         size = cache_file.bytes_to_read;
+        stage = cache_file.stage;
     } else {
-        return;
+        size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
+        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+        stage = kIndexStage;
     }
 
     file_ctx->fd = sst_fd;
     file_ctx->footer_len = footer_len;
-    file_ctx->stage = cache_file.stage;
+    file_ctx->stage = stage;
 
     file_ctx->bytes_to_read = size;
     file_ctx->offset = offset;

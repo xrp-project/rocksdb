@@ -74,6 +74,8 @@
 #include "util/stop_watch.h"
 #include "util/string_util.h"
 
+#include <iostream>
+
 namespace ROCKSDB_NAMESPACE {
 namespace {
 
@@ -2155,10 +2157,10 @@ Status BlockBasedTable::ApproximateKeyAnchors(const ReadOptions& read_options,
   return Status::OK();
 }
 
-Status BlockBasedTable::SoftGet(const Slice& key,
+Status BlockBasedTable::CacheGet(const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,
-                            bool skip_filters, struct file_context& xrp_file) {
+                            bool skip_filters, struct file_context* xrp_file) {
   assert(key.size() >= 8);  // key must be internal key
   assert(get_context != nullptr);
 
@@ -2213,6 +2215,8 @@ Status BlockBasedTable::SoftGet(const Slice& key,
     iiter_unique_ptr.reset(iiter);
   }
 
+  uint64_t data_block_size;
+  uint64_t data_block_offset;
   size_t ts_sz =
       rep_->internal_comparator.user_comparator()->timestamp_size();
   bool matched = false;  // if such user key matched a key in SST
@@ -2229,6 +2233,12 @@ Status BlockBasedTable::SoftGet(const Slice& key,
       // lowest key in current block.
       break;
     }
+
+    data_block_size = v.handle.size();
+    data_block_offset = v.handle.offset();
+
+    std::cout << data_block_size << std::endl;
+    std::cout << data_block_offset << std::endl;
 
     BlockCacheLookupContext lookup_data_block_context{
         TableReaderCaller::kUserGet, tracing_get_id,
@@ -2288,6 +2298,9 @@ Status BlockBasedTable::SoftGet(const Slice& key,
         }
       }
       s = biter.status();
+
+      // Data block has been traversed and no key was found
+      hasData = true;
     }
     
     if (done) {
@@ -2305,11 +2318,12 @@ Status BlockBasedTable::SoftGet(const Slice& key,
 
   if (hasFilter || hasData) {
     // skip file
-    return Status::IsTryAgain();
+    xrp_file->fd = -1; // very bad implementation atm
   }
  
-  if (hasIndex) {
-    xrp_file.bytes_to_read = ;
+  if (hasIndex) { 
+    xrp_file->bytes_to_read = data_block_size; //TODO-XRP: maybe data_block_size - offset?
+    xrp_file->offset = data_block_offset;
   }
 
   return s;

@@ -13,6 +13,8 @@ namespace ROCKSDB_NAMESPACE {
 
 #define SYS_READ_XRP 445
 
+#define EBPF_PARSER_PATH "/mydata/rocksdb_tal/ebpf/parser.o"
+
 // Value types encoded as the last component of internal keys
 // Incomplete list, see db/dbformat.h
 enum value_type {
@@ -62,11 +64,16 @@ struct file_array {
     uint8_t count;
 };
 
-struct data_copy_context {
-    uint64_t initial_offset;
-    uint64_t total_size;
-    uint64_t size_remaining;
-    uint64_t nr_pages;
+enum parse_stage {
+    kFooterStage = 0x0,
+    kIndexStage = 0x1,
+    kDataStage = 0x2
+};
+
+union varint_context {
+    uint64_t varint64;
+    uint32_t varint32;
+    int64_t varsigned64;
 };
 
 struct index_parse_context {
@@ -87,18 +94,17 @@ struct rocksdb_ebpf_context {
     uint64_t footer_len;
     enum parse_stage stage;
     int found;
-    int copy_data;
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
-    struct block_handle handle;
+    struct block_handle handle; // need to set this from userspace!
     union varint_context varint_context;
-    struct file_array files;
-    struct data_copy_context data_copy_context;
     union {
         struct index_parse_context index_context;
         struct data_parse_context data_context;
     };
+    struct file_array file_array;
 };
+
 
 class XRPContext {
    public:
@@ -107,7 +113,7 @@ class XRPContext {
 
     Status Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched);
     void Reset(void);
-    void AddFile(const BlockBasedTable &sst, struct file_context &input_file) {
+    void AddFile(const BlockBasedTable &sst, struct file_context &input_file);
 
 
    private:

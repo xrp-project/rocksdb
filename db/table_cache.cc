@@ -447,7 +447,7 @@ Status TableCache::Get(
     const FileMetaData& file_meta, const Slice& k, GetContext* get_context,
     const std::shared_ptr<const SliceTransform>& prefix_extractor,
     HistogramImpl* file_read_hist, bool skip_filters, int level,
-    size_t max_file_size_for_l0_meta_pin, bool sample, struct file_context& xrp_file) {
+    size_t max_file_size_for_l0_meta_pin, bool sample, struct file_context* xrp_file) {
   auto& fd = file_meta.fd;
   std::string* row_cache_entry = nullptr;
   bool done = false;
@@ -508,7 +508,7 @@ Status TableCache::Get(
       } else {
 
         BlockBasedTable *bbt = (BlockBasedTable *)t;
-        s = bbt->SoftGet(k, get_context, prefix_extractor.get(), skip_filters, xrp_file);
+        s = bbt->CacheGet(k, get_context, prefix_extractor.get(), skip_filters, xrp_file);
       }
 
       get_context->SetReplayLog(nullptr);

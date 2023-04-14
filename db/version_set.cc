@@ -2294,8 +2294,9 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
-  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE);
-  
+  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE) || true; 
+  Slice *s; // value will be stored in slice
+
   xrp->Reset();
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
@@ -2315,13 +2316,15 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     auto& fd = f->file_metadata->fd;
     TableReader* t = fd.table_reader;
     Cache::Handle* handle = nullptr;
+
+    auto skip_filters = IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),fp.IsHitFileLastInLevel());
     
     if (t == nullptr) {
       *status = table_cache_->FindTable(read_options, file_options_, *internal_comparator(), *f->file_metadata,
                     &handle, mutable_cf_options_.prefix_extractor,
                     read_options.read_tier == kBlockCacheTier /* no_io */,
-                    true /* record_read_stats */, cfd_->internal_stats()->GetFileReadHist(fp.GetHitFileLevel()), IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),
-                    fp.IsHitFileLastInLevel()), fp.GetHitFileLevel(),true /* prefetch_index_and_filter_in_cache */,
+                    true /* record_read_stats */, cfd_->internal_stats()->GetFileReadHist(fp.GetHitFileLevel()), skip_filters,
+                    fp.GetHitFileLevel(), true /* prefetch_index_and_filter_in_cache */,
                     max_file_size_for_l0_meta_pin_, f->file_metadata->temperature);
       if (status->ok()) {
         t = table_cache_->GetTableReaderFromHandle(handle);
@@ -2332,25 +2335,49 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
     struct file_context xrp_file = {0};
 
-    Status get_status = table_cache_->Get(
-    read_options, *internal_comparator(), *f->file_metadata, ikey,
-    &get_context, mutable_cf_options_.prefix_extractor,
-    file_read_hist, skip_filter, level, max_file_size_for_l0_meta_pin_, sample, xrp_file);
+    if (sample) {
+      // sample the disk - regular read path to populate cache
+      *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), skip_filters);
 
-    if (sample || get_status.ok()) {
-      *status = get_status;
-      goto request_out;
+
+      if (!status->ok()) {
+        if (db_statistics_ != nullptr) {
+          get_context.ReportCounters();
+        }
+        return;
+      }
+    } else {
+      // only look in cache. we don't care about status
+      *status = bbt->CacheGet(ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), skip_filters, &xrp_file);
+    }
+    
+    // check if cache or sample found the value
+    switch (get_context.State()) {
+      case GetContext::kNotFound:
+        // Keep searching in other files
+        break;
+      case GetContext::kMerge:
+        break;
+      default:
+        goto get_out;
     }
 
-    xrp->AddFile(*bbt);
+    // if using XRP, add to XRP file array
+    if (!sample)
+      xrp->AddFile(*bbt, xrp_file);
+
     f = fp.GetNextFile();
   }
-  Slice *s = dynamic_cast<Slice *>(value);
-  bool matched;
 
-  *status = xrp->Get(user_key, *s, &get_context, &matched);
+  // if using XRP, make the request
+  if (!sample) {
+    s = dynamic_cast<Slice *>(value);
+    bool matched;
 
-request_out:
+    *status = xrp->Get(user_key, *s, &get_context, &matched);
+  }
+
+get_out:
   if (!status->ok()) {
     if (db_statistics_ != nullptr) {
       get_context.ReportCounters();
