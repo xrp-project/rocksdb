@@ -95,7 +95,7 @@ __inline int64_t zigzagToI64(uint64_t n) {
 __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t ret;
-    
+
     ret = decode_varint64(context, offset, limit);
     rocksdb_ctx->varint_context.varsigned64 = zigzagToI64(rocksdb_ctx->varint_context.varint64);
     return ret;
@@ -110,7 +110,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
 
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
-    
+
     while (n && *user_key && (*user_key == *block_key)) {
         ++user_key;
         ++block_key;
@@ -556,6 +556,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     enum parse_stage stage = rocksdb_ctx->stage;
     int ret = 0;
 
+    context->fd_arr[0] = context->cur_fd;
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
@@ -571,7 +572,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
 
         if (ret == 1) // found
             return 0;
-        
+
         rocksdb_ctx->found = 0; // not found
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
