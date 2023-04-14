@@ -22,28 +22,40 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-XRPContext::XRPContext(const std::string &ebpf_program) {
-    bpf_fd = load_bpf_program(ebpf_program.c_str());
-
+XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): is_bpfof(_is_bpfof) {
+    if (this->is_bpfof){
+        std::cout << "XRPContext: using bpfof" << std::endl;
+        this->bpf_fd = -1234;
+        data_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE));
+        if (!data_buf)
+            throw std::runtime_error("aligned_alloc() for data_buf failed");
+        memset(data_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
+    }
+    else {
+        this->bpf_fd = load_bpf_program(ebpf_program.c_str());
+        data_buf = static_cast<uint8_t *>(mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE,
+                                    MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0));
+        if (data_buf == MAP_FAILED)
+            throw std::runtime_error("mmap() failed");
+        memset(data_buf, 0, huge_page_size);
+    }
     scratch_buf = static_cast<uint8_t *>(aligned_alloc(EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE));
     if (!scratch_buf)
         throw std::runtime_error("aligned_alloc() failed");
 
-    data_buf = static_cast<uint8_t *>(mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE,
-                                  MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0));
-
-    if (data_buf == MAP_FAILED)
-        throw std::runtime_error("mmap() failed");
-
-    memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
     ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
 }
 
 XRPContext::~XRPContext() {
     free(scratch_buf);
-    munmap(data_buf, huge_page_size);
-    close(bpf_fd);
+    if (this->is_bpfof)
+        free(data_buf);
+    else {
+        if (munmap(data_buf, huge_page_size) != 0)
+            fprintf(stdout, "XRPContext: failed to munmap %p length %lu\n", data_buf, huge_page_size);
+        close(bpf_fd);
+    }
 }
 
 int XRPContext::load_bpf_program(const char *path) {
@@ -74,11 +86,11 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
     if (ctx->stage == kDataStage) {
         request_size = ctx->handle.size + ctx->footer_len + BlockBasedTable::kBlockTrailerSize;
 
-        request_size = (request_size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+        request_size = (request_size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
     } else if (ctx->stage == kIndexStage) {
         request_size = ctx->handle.size;
     } else {
-        request_size = EBPF_DATA_BUFFER_SIZE;
+        request_size = 4096;
     }
 
     long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, request_size, start_file.offset, bpf_fd, scratch_buf);
@@ -102,6 +114,12 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
 }
 
 void XRPContext::Reset(void) {
+    if (this->is_bpfof)
+        memset(data_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
+    else
+        memset(data_buf, 0, huge_page_size);
+    memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
+
     memset(data_buf, 0, huge_page_size);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 }
@@ -121,7 +139,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     PosixRandomAccessFile *file = static_cast<PosixRandomAccessFile *>(rep->file->file());
     if (!file)
         throw std::runtime_error("SST file not found");
-        
+
     sst_fd = file->GetFd();
 
     struct file_context *file_ctx = ctx->file_array.array + ctx->file_array.count++;
@@ -140,7 +158,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
         footer_len = index_handle.offset() - offset;
 
         size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
-        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
         stage = kIndexStage;
     }
 

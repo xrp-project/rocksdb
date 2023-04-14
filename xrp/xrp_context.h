@@ -6,8 +6,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-#define EBPF_DATA_BUFFER_SIZE 4096
-#define EBPF_SCRATCH_BUFFER_SIZE (1 << 21) // (4 * 4096)
+#define EBPF_SCRATCH_BUFFER_SIZE 4096 // (4 * 4096)
 #define EBPF_BLOCK_SIZE 512
 #define PAGE_SIZE 4096
 
@@ -98,7 +97,7 @@ struct rocksdb_ebpf_context {
 
 class XRPContext {
    public:
-    XRPContext(const std::string &ebpf_program);
+    XRPContext(const std::string &ebpf_program, const bool is_bpfof);
     ~XRPContext();
 
     Status Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched);
@@ -110,6 +109,7 @@ class XRPContext {
     int load_bpf_program(const char *path);
 
     int bpf_fd;
+    bool is_bpfof;
     uint8_t *data_buf;
     uint8_t *scratch_buf;
     const size_t huge_page_size = 1 << 21;
