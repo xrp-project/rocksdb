@@ -26,6 +26,8 @@
 #include "trace_replay/block_cache_tracer.h"
 #include "util/coro_utils.h"
 
+#include "xrp_context.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 class Env;
@@ -103,7 +105,7 @@ class TableCache {
       const FileMetaData& file_meta, const Slice& k, GetContext* get_context,
       const std::shared_ptr<const SliceTransform>& prefix_extractor = nullptr,
       HistogramImpl* file_read_hist = nullptr, bool skip_filters = false,
-      int level = -1, size_t max_file_size_for_l0_meta_pin = 0);
+      int level = -1, size_t max_file_size_for_l0_meta_pin = 0, bool sample = false, struct file_context& xrp_file);
 
   // Return the range delete tombstone iterator of the file specified by
   // `file_meta`.

@@ -34,6 +34,8 @@
 #include "util/coro_utils.h"
 #include "util/hash_containers.h"
 
+#include "xrp_context.h"
+
 namespace ROCKSDB_NAMESPACE {
 
 class Cache;
@@ -134,6 +136,10 @@ class BlockBasedTable : public TableReader {
   FragmentedRangeTombstoneIterator* NewRangeTombstoneIterator(
       const ReadOptions& read_options) override;
 
+  Status SoftGet(const Slice& key, 
+             GetContext* get_context, const SliceTransform* prefix_extractor,
+             bool skip_filters = false, struct file_context& xrp_file);
+    
   // @param skip_filters Disables loading/accessing the filter block
   Status Get(const ReadOptions& readOptions, const Slice& key,
              GetContext* get_context, const SliceTransform* prefix_extractor,

@@ -6,8 +6,8 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-#define EBPF_DATA_BUFFER_SIZE (1UL << 21UL)
-#define EBPF_SCRATCH_BUFFER_SIZE 4096
+#define EBPF_DATA_BUFFER_SIZE 4096
+#define EBPF_SCRATCH_BUFFER_SIZE (1 << 21) // (4 * 4096)
 #define EBPF_BLOCK_SIZE 512
 #define PAGE_SIZE 4096
 
@@ -34,6 +34,8 @@ struct block_handle {
 #define MAX_KEY_LEN 63
 #define MAX_VALUE_LEN 255
 
+#define INITIAL_SCRATCH_DATA_PAGE 1
+
 enum parse_stage {
     kFooterStage = 0x0,
     kIndexStage = 0x1,
@@ -44,6 +46,27 @@ union varint_context {
     uint64_t varint64;
     uint32_t varint32;
     int64_t varsigned64;
+};
+
+struct file_context {
+    uint32_t fd;
+    uint64_t footer_len;
+    uint64_t offset;
+    uint64_t bytes_to_read;
+    enum parse_stage stage;
+};
+
+struct file_array {
+    struct file_context array[16];
+    uint8_t curr_idx;
+    uint8_t count;
+};
+
+struct data_copy_context {
+    uint64_t initial_offset;
+    uint64_t total_size;
+    uint64_t size_remaining;
+    uint64_t nr_pages;
 };
 
 struct index_parse_context {
@@ -64,10 +87,13 @@ struct rocksdb_ebpf_context {
     uint64_t footer_len;
     enum parse_stage stage;
     int found;
+    int copy_data;
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
     struct block_handle handle;
     union varint_context varint_context;
+    struct file_array files;
+    struct data_copy_context data_copy_context;
     union {
         struct index_parse_context index_context;
         struct data_parse_context data_context;
@@ -79,7 +105,10 @@ class XRPContext {
     XRPContext(const std::string &ebpf_program);
     ~XRPContext();
 
-    Status do_xrp(const BlockBasedTable &sst, const Slice &key, Slice &value, GetContext *get_context, bool *matched);
+    Status Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched);
+    void Reset(void);
+    void AddFile(const BlockBasedTable &sst, struct file_context &input_file) {
+
 
    private:
     int load_bpf_program(const char *path);
@@ -88,6 +117,8 @@ class XRPContext {
     uint8_t *data_buf;
     uint8_t *scratch_buf;
     const size_t huge_page_size = 1 << 21;
+    struct rocksdb_ebpf_context *ctx;
+
 };
 
 }  // namespace ROCKSDB_NAMESPACE

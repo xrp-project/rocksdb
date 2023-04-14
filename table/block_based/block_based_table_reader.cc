@@ -2155,6 +2155,166 @@ Status BlockBasedTable::ApproximateKeyAnchors(const ReadOptions& read_options,
   return Status::OK();
 }
 
+Status BlockBasedTable::SoftGet(const Slice& key,
+                            GetContext* get_context,
+                            const SliceTransform* prefix_extractor,
+                            bool skip_filters, struct file_context& xrp_file) {
+  assert(key.size() >= 8);  // key must be internal key
+  assert(get_context != nullptr);
+
+  Status s;
+
+  const bool no_io = true;
+  ReadOptions read_options = ReadOptions();
+  read_options.read_tier = kBlockCacheTier;
+
+  bool hasFilter = false;
+  bool hasData = false;
+  bool hasIndex = false;
+
+  // First check the full filter
+  // If full filter not useful, Then go into each block
+  uint64_t tracing_get_id = get_context->get_tracing_get_id();
+  BlockCacheLookupContext lookup_context{
+      TableReaderCaller::kUserGet, tracing_get_id,
+      /*get_from_user_specified_snapshot=*/read_options.snapshot != nullptr};
+  
+  FilterBlockReader* const filter =
+      !skip_filters ? rep_->filter.get() : nullptr;
+
+  const bool may_match = FullFilterKeyMayMatch(
+      filter, key, no_io, prefix_extractor, get_context, &lookup_context,
+      read_options.rate_limiter_priority);
+
+  if (!may_match) {
+    // XRP: Filter found (with no-io), and doesn't match. We can skip file.
+    hasFilter = true;
+  }
+
+  IndexBlockIter iiter_on_stack;
+  // if prefix_extractor found in block differs from options, disable
+  // BlockPrefixIndex. Only do this check when index_type is kHashSearch.
+  bool need_upper_bound_check = false;
+  if (rep_->index_type == BlockBasedTableOptions::kHashSearch) {
+    need_upper_bound_check = PrefixExtractorChanged(prefix_extractor);
+  }
+
+  auto iiter =
+      NewIndexIterator(read_options, need_upper_bound_check, &iiter_on_stack,
+                        get_context, &lookup_context);
+
+  if (!iiter->status().IsIncomplete()) {
+    // We were able to look up the index block, start parsing at data block
+    hasIndex = true;
+  }
+
+  std::unique_ptr<InternalIteratorBase<IndexValue>> iiter_unique_ptr;
+  if (iiter != &iiter_on_stack) {
+    iiter_unique_ptr.reset(iiter);
+  }
+
+  size_t ts_sz =
+      rep_->internal_comparator.user_comparator()->timestamp_size();
+  bool matched = false;  // if such user key matched a key in SST
+  bool done = false;
+  for (iiter->Seek(key); iiter->Valid() && !done; iiter->Next()) {
+    IndexValue v = iiter->value();
+
+    if (!v.first_internal_key.empty() && !skip_filters &&
+        UserComparatorWrapper(rep_->internal_comparator.user_comparator())
+                .CompareWithoutTimestamp(
+                    ExtractUserKey(key),
+                    ExtractUserKey(v.first_internal_key)) < 0) {
+      // The requested key falls between highest key in previous block and
+      // lowest key in current block.
+      break;
+    }
+
+    BlockCacheLookupContext lookup_data_block_context{
+        TableReaderCaller::kUserGet, tracing_get_id,
+        /*get_from_user_specified_snapshot=*/read_options.snapshot !=
+            nullptr};
+    DataBlockIter biter;
+    Status tmp_status;
+    NewDataBlockIterator<DataBlockIter>(
+        read_options, v.handle, &biter, BlockType::kData, get_context,
+        &lookup_data_block_context, /*prefetch_buffer=*/nullptr,
+        /*for_compaction=*/false, /*async_read=*/false, tmp_status);
+
+    if (no_io && biter.status().IsIncomplete()) {
+      // couldn't get block from block_cache
+      // Update Saver.state to Found because we are only looking for
+      // whether we can guarantee the key is not there when "no_io" is set
+      
+      /* XRP, we remove this because it sets key to found */
+      //get_context->MarkKeyMayExist();
+
+      s = biter.status();
+      break;
+    }
+
+    if (!biter.status().ok()) {
+      s = biter.status();
+      break;
+    }
+
+    bool may_exist = biter.SeekForGet(key);
+    // If user-specified timestamp is supported, we cannot end the search
+    // just because hash index lookup indicates the key+ts does not exist.
+    if (!may_exist && ts_sz == 0) {
+      // HashSeek cannot find the key this block and the the iter is not
+      // the end of the block, i.e. cannot be in the following blocks
+      // either. In this case, the seek_key cannot be found, so we break
+      // from the top level for-loop.
+      done = true;
+
+      // XRP: key cannot be in data block, so we skip file
+      hasData = true;
+    } else {
+      // Call the *saver function on each entry/block until it returns false
+      for (; biter.Valid(); biter.Next()) {
+        ParsedInternalKey parsed_key;
+        Status pik_status = ParseInternalKey(
+            biter.key(), &parsed_key, false /* log_err_key */);
+        if (!pik_status.ok()) {
+          s = pik_status;
+        }
+
+        if (!get_context->SaveValue(
+                parsed_key, biter.value(), &matched,
+                biter.IsValuePinned() ? &biter : nullptr)) {
+          done = true;
+          break;
+        }
+      }
+      s = biter.status();
+    }
+    
+    if (done) {
+      break;
+    }
+  }
+  if (s.ok() && !iiter->status().IsNotFound()) {
+    s = iiter->status();
+  }
+
+  if (s.ok() && !matched) {
+    // XRP: Key is not in data block, we can skip file
+    hasData = true;
+  }
+
+  if (hasFilter || hasData) {
+    // skip file
+    return Status::IsTryAgain();
+  }
+ 
+  if (hasIndex) {
+    xrp_file.bytes_to_read = ;
+  }
+
+  return s;
+}
+
 Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,

@@ -77,6 +77,8 @@
 
 #include "db/table_cache.h"
 
+#define SAMPLE_RATE 5
+
 // Generate the regular and coroutine versions of some methods by
 // including version_set_sync_and_async.h twice
 // Macros in the header will expand differently based on whether
@@ -2292,6 +2294,9 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
+  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE);
+  
+  xrp->Reset();
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
@@ -2322,91 +2327,103 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
         t = table_cache_->GetTableReaderFromHandle(handle);
       }
     }
-
+  
     BlockBasedTable *bbt = static_cast<BlockBasedTable *>(t);
-    Slice *s = dynamic_cast<Slice *>(value);
 
-    bool matched;
-    *status = xrp->do_xrp(*bbt, user_key, *s, &get_context, &matched);
+    struct file_context xrp_file = {0};
 
-    // TODO: examine the behavior for corrupted key
-    if (timer_enabled) {
-      PERF_COUNTER_BY_LEVEL_ADD(get_from_table_nanos, timer.ElapsedNanos(),
-                                fp.GetHitFileLevel());
-    }
-    
-    if (!status->ok()) {
-      if (db_statistics_ != nullptr) {
-        get_context.ReportCounters();
-      }
-      return;
+    Status get_status = table_cache_->Get(
+    read_options, *internal_comparator(), *f->file_metadata, ikey,
+    &get_context, mutable_cf_options_.prefix_extractor,
+    file_read_hist, skip_filter, level, max_file_size_for_l0_meta_pin_, sample, xrp_file);
+
+    if (sample || get_status.ok()) {
+      *status = get_status;
+      goto request_out;
     }
 
-    // report the counters before returning
-    if (get_context.State() != GetContext::kNotFound &&
-        get_context.State() != GetContext::kMerge &&
-        db_statistics_ != nullptr) {
-      get_context.ReportCounters();
-    }
-    switch (get_context.State()) {
-      case GetContext::kNotFound:
-        // Keep searching in other files
-        break;
-      case GetContext::kMerge:
-        // TODO: update per-level perfcontext user_key_return_count for kMerge
-        break;
-      case GetContext::kFound:
-        if (fp.GetHitFileLevel() == 0) {
-          RecordTick(db_statistics_, GET_HIT_L0);
-        } else if (fp.GetHitFileLevel() == 1) {
-          RecordTick(db_statistics_, GET_HIT_L1);
-        } else if (fp.GetHitFileLevel() >= 2) {
-          RecordTick(db_statistics_, GET_HIT_L2_AND_UP);
-        }
-
-        PERF_COUNTER_BY_LEVEL_ADD(user_key_return_count, 1,
-                                  fp.GetHitFileLevel());
-
-        if (is_blob_index) {
-          if (do_merge && value) {
-            TEST_SYNC_POINT_CALLBACK("Version::Get::TamperWithBlobIndex",
-                                     value);
-
-            constexpr FilePrefetchBuffer* prefetch_buffer = nullptr;
-            constexpr uint64_t* bytes_read = nullptr;
-
-            *status = GetBlob(read_options, user_key, *value, prefetch_buffer,
-                              value, bytes_read);
-            if (!status->ok()) {
-              if (status->IsIncomplete()) {
-                get_context.MarkKeyMayExist();
-              }
-              return;
-            }
-          }
-        }
-
-        return;
-      case GetContext::kDeleted:
-        // Use empty error message for speed
-        *status = Status::NotFound();
-        return;
-      case GetContext::kCorrupt:
-        *status = Status::Corruption("corrupted key for ", user_key);
-        return;
-      case GetContext::kUnexpectedBlobIndex:
-        ROCKS_LOG_ERROR(info_log_, "Encounter unexpected blob index.");
-        *status = Status::NotSupported(
-            "Encounter unexpected blob index. Please open DB with "
-            "ROCKSDB_NAMESPACE::blob_db::BlobDB instead.");
-        return;
-      case GetContext::kUnexpectedWideColumnEntity:
-        *status =
-            Status::NotSupported("Encountered unexpected wide-column entity");
-        return;
-    }
+    xrp->AddFile(*bbt);
     f = fp.GetNextFile();
   }
+  Slice *s = dynamic_cast<Slice *>(value);
+  bool matched;
+
+  *status = xrp->Get(user_key, *s, &get_context, &matched);
+
+request_out:
+  if (!status->ok()) {
+    if (db_statistics_ != nullptr) {
+      get_context.ReportCounters();
+    }
+    return;
+  }
+
+  // report the counters before returning
+  if (get_context.State() != GetContext::kNotFound &&
+      get_context.State() != GetContext::kMerge &&
+      db_statistics_ != nullptr) {
+    get_context.ReportCounters();
+  }
+  switch (get_context.State()) {
+    case GetContext::kNotFound:
+      // Keep searching in other files
+      break;
+    case GetContext::kMerge:
+      // TODO: update per-level perfcontext user_key_return_count for kMerge
+      break;
+    case GetContext::kFound:
+      if (fp.GetHitFileLevel() == 0) {
+        RecordTick(db_statistics_, GET_HIT_L0);
+      } else if (fp.GetHitFileLevel() == 1) {
+        RecordTick(db_statistics_, GET_HIT_L1);
+      } else if (fp.GetHitFileLevel() >= 2) {
+        RecordTick(db_statistics_, GET_HIT_L2_AND_UP);
+      }
+
+      PERF_COUNTER_BY_LEVEL_ADD(user_key_return_count, 1,
+                                fp.GetHitFileLevel());
+
+      if (is_blob_index) {
+        if (do_merge && value) {
+          TEST_SYNC_POINT_CALLBACK("Version::Get::TamperWithBlobIndex",
+                                    value);
+
+          constexpr FilePrefetchBuffer* prefetch_buffer = nullptr;
+          constexpr uint64_t* bytes_read = nullptr;
+
+          *status = GetBlob(read_options, user_key, *value, prefetch_buffer,
+                            value, bytes_read);
+          if (!status->ok()) {
+            if (status->IsIncomplete()) {
+              get_context.MarkKeyMayExist();
+            }
+            return;
+          }
+        }
+      }
+
+      return;
+    case GetContext::kDeleted:
+      // Use empty error message for speed
+      *status = Status::NotFound();
+      return;
+    case GetContext::kCorrupt:
+      *status = Status::Corruption("corrupted key for ", user_key);
+      return;
+    case GetContext::kUnexpectedBlobIndex:
+      ROCKS_LOG_ERROR(info_log_, "Encounter unexpected blob index.");
+      *status = Status::NotSupported(
+          "Encounter unexpected blob index. Please open DB with "
+          "ROCKSDB_NAMESPACE::blob_db::BlobDB instead.");
+      return;
+    case GetContext::kUnexpectedWideColumnEntity:
+      *status =
+          Status::NotSupported("Encountered unexpected wide-column entity");
+      return;
+  }
+
+
+
   if (db_statistics_ != nullptr) {
     get_context.ReportCounters();
   }
