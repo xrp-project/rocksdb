@@ -180,12 +180,42 @@ struct rocksdb_ebpf_context {
     int found;
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
-    struct block_handle handle;
+    struct block_handle handle; // need to set this from userspace!
     union varint_context varint_context;
     union {
         struct index_parse_context index_context;
         struct data_parse_context data_context;
     };
+    struct file_array file_array;
 };
+
+
+// The RocksDB context contains an array of file_context. Each file_context
+// corresponds to an SST file we need to check.
+// - The stage field indicates how much of the file we have already parsed
+//   using the in-memory cache.
+// - The fd is the file descriptor of the SST file.
+// - The offset and bytes_to_read fields indicate what the next read should be.
+struct file_context {
+    uint32_t fd;
+    uint64_t footer_len;
+    uint64_t offset;
+    uint64_t bytes_to_read;
+    enum parse_stage stage;
+};
+
+struct file_array {
+    struct file_context array[16];
+    uint8_t curr_idx;
+    uint8_t count;
+};
+
+static inline int round_up(int x, int alignment) {
+    return __ALIGN_KERNEL(x, alignment);
+}
+
+static inline int round_down(int x, int alignment) {
+    return (x / alignment) * alignment;
+}
 
 #endif // _EBPF_ROCKSDB_PARSER_H_

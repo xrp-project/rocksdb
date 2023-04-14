@@ -95,7 +95,7 @@ __inline int64_t zigzagToI64(uint64_t n) {
 __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t ret;
-    
+
     ret = decode_varint64(context, offset, limit);
     rocksdb_ctx->varint_context.varsigned64 = zigzagToI64(rocksdb_ctx->varint_context.varint64);
     return ret;
@@ -110,7 +110,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
 
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
-    
+
     while (n && *user_key && (*user_key == *block_key)) {
         ++user_key;
         ++block_key;
@@ -445,11 +445,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
 
     rocksdb_ctx->stage = kDataStage;
 
-    context->next_addr[0] = (rocksdb_ctx->handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+    context->next_addr[0] = round_down(rocksdb_ctx->handle.offset, EBPF_BLOCK_SIZE);
     bpf_printk("Address for data block: %llu\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
     data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
-    context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
+    context->size[0] = round_up(data_size, PAGE_SIZE);
     bpf_printk("data block size: %llu\n", context->size[0]);
     bpf_printk("data block offset: %llu\n", rocksdb_ctx->footer_len);
     context->done = false;
@@ -540,14 +540,42 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
     rocksdb_ctx->stage = kIndexStage;
 
     // need previous multiple of 512
-    context->next_addr[0] = (footer.index_handle.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+    context->next_addr[0] = round_down(footer.index_handle.offset, EBPF_BLOCK_SIZE);
     bpf_printk("Index block offset: %d\n", context->next_addr[0]);
     rocksdb_ctx->footer_len = footer.index_handle.offset - context->next_addr[0];
     index_size = rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
-    context->size[0] = __ALIGN_KERNEL(index_size, PAGE_SIZE);
+    context->size[0] = round_up(index_size, PAGE_SIZE);
+
     context->done = false;
 
     return 0;
+}
+
+__noinline void next_sst_file(struct bpf_xrp *context) {
+    int curr_idx, data_size;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+
+    // Is there another file to process?
+    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1) {
+        context->done = true;
+        return;
+    }
+
+    // Prepare to process the next file
+    rocksdb_ctx->file_array.curr_idx++;
+    // 1. Set the parser state
+    curr_idx = rocksdb_ctx->file_array.curr_idx;
+    rocksdb_ctx->handle.offset = rocksdb_ctx->file_array.array[curr_idx].offset;
+    rocksdb_ctx->handle.size = rocksdb_ctx->file_array.array[curr_idx].bytes_to_read;
+    rocksdb_ctx->footer_len = rocksdb_ctx->file_array.array[curr_idx].footer_len; // or rocksdb_ctx->handle.offset - context->next_addr[0];
+    rocksdb_ctx->stage = rocksdb_ctx->file_array.array[curr_idx].stage;
+
+    // 2. Set the resubmission settings
+    data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    context->cur_fd = context->fd_arr[rocksdb_ctx->file_array.array[curr_idx].fd];
+    context->next_addr[0] = round_down(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
+    context->size[0] = round_up(data_size, PAGE_SIZE);
+    context->done = false;
 }
 
 SEC("prog")
@@ -556,6 +584,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     enum parse_stage stage = rocksdb_ctx->stage;
     int ret = 0;
 
+    context->fd_arr[0] = context->cur_fd;
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
@@ -571,14 +600,19 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
 
         if (ret == 1) // found
             return 0;
-        
+
         rocksdb_ctx->found = 0; // not found
+        next_sst_file(context);
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
         ret = parse_data_block(context, rocksdb_ctx->footer_len);
         rocksdb_ctx->found = ret == 1;
         if (ret == 1)
             ret = 0;
+        if (!rocksdb_ctx->found){
+            next_sst_file(context);
+            return 0;
+        }
     } else {
         return -EBPF_EINVAL;
     }
