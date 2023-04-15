@@ -551,14 +551,15 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
     return 0;
 }
 
-__noinline void next_sst_file(struct bpf_xrp *context) {
+__noinline int next_sst_file(struct bpf_xrp *context) {
     int curr_idx, data_size;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
     // Is there another file to process?
-    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1) {
+    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1
+    || rocksdb_ctx->file_array.curr_idx > 15) {
         context->done = true;
-        return;
+        return 0;
     }
 
     // Prepare to process the next file
@@ -572,10 +573,15 @@ __noinline void next_sst_file(struct bpf_xrp *context) {
 
     // 2. Set the resubmission settings
     data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
-    context->cur_fd = context->fd_arr[rocksdb_ctx->file_array.array[curr_idx].fd];
+
+    if (curr_idx > 5) {
+        return 0;
+    }
+    context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;
     context->next_addr[0] = round_down(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
     context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
     context->done = false;
+    return 0;
 }
 
 SEC("prog")
@@ -603,6 +609,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
 
         rocksdb_ctx->found = 0; // not found
         next_sst_file(context);
+        return 0;
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
         ret = parse_data_block(context, rocksdb_ctx->footer_len);

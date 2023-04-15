@@ -43,10 +43,10 @@ int main() {
   std::string value;
   // get value
 
-  //s = db->Put(WriteOptions(), "key2", "value");
+  //s = db->Put(WriteOptions(), "000000000009911", "value");
   //assert(s.ok());
 
-  s = db->Get(ReadOptions(), "key2", &value);
+  s = db->Get(ReadOptions(), "000000000009911", &value);
   std::cout << s.ToString() << std::endl;
 
   assert(s.ok());

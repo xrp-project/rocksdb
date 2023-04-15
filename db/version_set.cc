@@ -2294,7 +2294,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
-  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE) || true; 
+  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE); 
   Slice *s; // value will be stored in slice
 
   xrp->Reset();

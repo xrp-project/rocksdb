@@ -2388,6 +2388,10 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         break;
       }
 
+      std::cout << "bb size = " << v.handle.size() << std::endl;
+      std::cout << "bb offset = " << v.handle.offset() << std::endl;
+      
+
       BlockCacheLookupContext lookup_data_block_context{
           TableReaderCaller::kUserGet, tracing_get_id,
           /*get_from_user_specified_snapshot=*/read_options.snapshot !=
