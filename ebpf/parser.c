@@ -108,6 +108,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     char *user_key = rocksdb_ctx->key;
     char *block_key = rocksdb_ctx->temp_key;
 
+    bpf_printk("user key = %s, block key = %s\n", user_key, block_key);
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
 
@@ -353,6 +354,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint32_t index_offset) 
     if (shared_size + non_shared_size > MAX_KEY_LEN)
         return -EBPF_EINVAL;
 
+    
     if (strncmp_key(context) > 0)
         return 0; // not found
 
@@ -574,9 +576,6 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     // 2. Set the resubmission settings
     data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
 
-    if (curr_idx > 5) {
-        return 0;
-    }
     context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;
     context->next_addr[0] = round_down(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
     context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);

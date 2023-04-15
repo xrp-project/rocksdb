@@ -41,8 +41,8 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
 }
 
 XRPContext::~XRPContext() {
-    free(data_buf);
-    munmap(scratch_buf, huge_page_size);
+    free(scratch_buf);
+    munmap(data_buf, huge_page_size);
     close(bpf_fd);
 }
 
@@ -67,6 +67,9 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
     struct file_context start_file = ctx->file_array.array[0];
     ctx->footer_len = start_file.footer_len;
     ctx->stage = start_file.stage; // TODO: change when using block cache
+
+    ctx->handle.size = start_file.bytes_to_read;
+    ctx->handle.offset = start_file.offset;
 
     long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, EBPF_DATA_BUFFER_SIZE, start_file.offset, bpf_fd, scratch_buf);
 
@@ -113,20 +116,26 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
 
     struct file_context *file_ctx = ctx->file_array.array + ctx->file_array.count++;
 
-    index_handle = rep->footer.index_handle();
-
-    offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-    footer_len = index_handle.offset() - offset;
-
     if (cache_file.stage == kDataStage) {
-        offset = cache_file.offset;
-        size = cache_file.bytes_to_read;
-        stage = cache_file.stage;
-    } else {
-        size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
+        offset = (cache_file.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+        footer_len = cache_file.offset - offset;
+
+        size = footer_len + cache_file.bytes_to_read + BlockBasedTable::kBlockTrailerSize;
         size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+
+        stage = kDataStage;
+
+    } else {
+        index_handle = rep->footer.index_handle();
+
+        offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
+        footer_len = index_handle.offset() - offset;
+
+        size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
         stage = kIndexStage;
     }
+    
+    size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
 
     file_ctx->fd = sst_fd;
     file_ctx->footer_len = footer_len;

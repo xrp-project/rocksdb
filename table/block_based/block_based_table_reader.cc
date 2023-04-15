@@ -2208,6 +2208,8 @@ Status BlockBasedTable::CacheGet(const Slice& key,
   if (!iiter->status().IsIncomplete()) {
     // We were able to look up the index block, start parsing at data block
     //hasIndex = true;
+  } else {
+    return Status::NotFound();
   }
 
   std::unique_ptr<InternalIteratorBase<IndexValue>> iiter_unique_ptr;
@@ -2235,9 +2237,6 @@ Status BlockBasedTable::CacheGet(const Slice& key,
     xrp_file->bytes_to_read = v.handle.size();
     xrp_file->offset = v.handle.offset();
     xrp_file->stage = kDataStage;
-
-    std::cout << "size = " << xrp_file->bytes_to_read << std::endl;
-    std::cout << "offset = " << xrp_file->offset << std::endl;
 
     BlockCacheLookupContext lookup_data_block_context{
         TableReaderCaller::kUserGet, tracing_get_id,
@@ -2388,9 +2387,6 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         break;
       }
 
-      std::cout << "bb size = " << v.handle.size() << std::endl;
-      std::cout << "bb offset = " << v.handle.offset() << std::endl;
-      
 
       BlockCacheLookupContext lookup_data_block_context{
           TableReaderCaller::kUserGet, tracing_get_id,
