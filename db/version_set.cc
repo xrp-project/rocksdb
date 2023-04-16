@@ -2298,6 +2298,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   bool sample = Random::GetTLSInstance()->OneIn(sample_rate); 
   Slice *s; // value will be stored in slice
   BlockBasedTable *bbt = nullptr; 
+  Cache::Handle* handle = nullptr;
 
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
@@ -2316,7 +2317,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
     auto& fd = f->file_metadata->fd;
     TableReader* t = fd.table_reader;
-    Cache::Handle* handle = nullptr;
+    
 
     auto skip_filters = IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),fp.IsHitFileLastInLevel());
     
@@ -2477,13 +2478,19 @@ get_out:
     // key does not exist, so resubmit with normal read path 
     if (sample || bbt == nullptr) {
       *status = Status::NotFound();
-      return;
+      goto exit;
     }
 
     sample = true; // ensure NotFound if key actually doesn't exist
     *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), true /* skip filters */);
     goto get_out;
   }
+
+exit:
+  if (handle != nullptr) {
+    table_cache_->ReleaseHandle(handle);
+  }
+  return;
 }
 
 void Version::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
