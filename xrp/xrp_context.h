@@ -14,6 +14,8 @@ namespace ROCKSDB_NAMESPACE {
 #define SYS_READ_XRP 445
 
 #define EBPF_PARSER_PATH "/mydata/tal_rocksdb/ebpf/parser.o"
+#define XRP_ENABLED true
+#define SAMPLE_RATE 100
 
 // Value types encoded as the last component of internal keys
 // Incomplete list, see db/dbformat.h

@@ -58,6 +58,7 @@ int XRPContext::load_bpf_program(const char *path) {
 
 Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched) {
     Status s = Status::OK();
+    uint32_t request_size;
 
     if (key.size() > MAX_KEY_LEN || ctx->file_array.count == 0)
         return Status::InvalidArgument();
@@ -70,8 +71,17 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
 
     ctx->handle.size = start_file.bytes_to_read;
     ctx->handle.offset = start_file.offset;
+    if (ctx->stage == kDataStage) {
+        request_size = ctx->handle.size + ctx->footer_len + BlockBasedTable::kBlockTrailerSize;
 
-    long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, EBPF_DATA_BUFFER_SIZE, start_file.offset, bpf_fd, scratch_buf);
+        request_size = (request_size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+    } else if (ctx->stage == kIndexStage) {
+        request_size = ctx->handle.size;
+    } else {
+        request_size = EBPF_DATA_BUFFER_SIZE;
+    }
+
+    long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, request_size, start_file.offset, bpf_fd, scratch_buf);
 
     if (ret < 0)
         s = Status::Corruption();
@@ -92,7 +102,7 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
 }
 
 void XRPContext::Reset(void) {
-    memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
+    memset(data_buf, 0, huge_page_size);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 }
 
@@ -120,11 +130,9 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
         offset = (cache_file.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
         footer_len = cache_file.offset - offset;
 
-        size = footer_len + cache_file.bytes_to_read + BlockBasedTable::kBlockTrailerSize;
-        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
+        size = cache_file.bytes_to_read;
 
         stage = kDataStage;
-
     } else {
         index_handle = rep->footer.index_handle();
 
@@ -132,10 +140,9 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
         footer_len = index_handle.offset() - offset;
 
         size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
+        size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
         stage = kIndexStage;
     }
-    
-    size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1); 
 
     file_ctx->fd = sst_fd;
     file_ctx->footer_len = footer_len;
@@ -143,6 +150,15 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
 
     file_ctx->bytes_to_read = size;
     file_ctx->offset = offset;
+
+    // print out all of the above
+    /*
+    std::cout << "fd: " << file_ctx->fd << std::endl;
+    std::cout << "footer_len: " << file_ctx->footer_len << std::endl;
+    std::cout << "stage: " << file_ctx->stage << std::endl;
+    std::cout << "bytes_to_read: " << file_ctx->bytes_to_read << std::endl;
+    std::cout << "offset: " << file_ctx->offset << std::endl;
+*/
 }
 
 }  // namespace ROCKSDB_NAMESPACE

@@ -77,8 +77,6 @@
 
 #include "db/table_cache.h"
 
-#define SAMPLE_RATE 5
-
 // Generate the regular and coroutine versions of some methods by
 // including version_set_sync_and_async.h twice
 // Macros in the header will expand differently based on whether
@@ -2294,9 +2292,9 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
-  bool sample = Random::GetTLSInstance()->OneIn(SAMPLE_RATE); 
+  bool sample = !XRP_ENABLED || Random::GetTLSInstance()->OneIn(SAMPLE_RATE); 
   Slice *s; // value will be stored in slice
-
+  //bool sample = false;
   xrp->Reset();
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
