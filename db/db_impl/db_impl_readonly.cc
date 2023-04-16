@@ -96,7 +96,7 @@ Status DBImplReadOnly::Get(const ReadOptions& read_options,
     PinnedIteratorsManager pinned_iters_mgr;
 
     if (thread_local_xrp_context_->Get() == nullptr) {
-      thread_local_xrp_context_->Reset(new XRPContext(std::string(EBPF_PARSER_PATH)));
+      thread_local_xrp_context_->Reset(new XRPContext(get_bpf_path(), is_bpfof()));
     }
 
     super_version->current->Get(

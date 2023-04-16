@@ -88,6 +88,23 @@ struct JobContext;
 struct ExternalSstFileInfo;
 struct MemTableInfo;
 
+
+static inline std::string get_bpf_path() {
+  // Check the env var "ROCKSDB_BPF_FILE"
+  char *bpf_path = std::getenv("ROCKSDB_BPF_FILE");
+  if (bpf_path == NULL)
+    return "/mydata/rocksdb/ebpf/parser.o";
+  return std::string(bpf_path);
+}
+
+static inline bool is_bpfof() {
+  // Check the env var "ROCKSDB_BPF_FILE"
+  char *bpf_enabled_envvar = std::getenv("ROCKSDB_BPFOF_ENABLED");
+  if (bpf_enabled_envvar == NULL)
+    return false;
+  return true;
+}
+
 // Class to maintain directories for all database paths other than main one.
 class Directories {
  public:

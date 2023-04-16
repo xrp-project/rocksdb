@@ -303,7 +303,7 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
   }
 
   if (thread_local_xrp_context_->Get() == nullptr) {
-    thread_local_xrp_context_->Reset(new XRPContext(std::string(EBPF_PARSER_PATH)));
+    thread_local_xrp_context_->Reset(new XRPContext(get_bpf_path(), is_bpfof()));
   }
 }
 
@@ -2144,7 +2144,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
     PERF_TIMER_GUARD(get_from_output_files_time);
 
     if (thread_local_xrp_context_->Get() == nullptr) {
-      thread_local_xrp_context_->Reset(new XRPContext(std::string(EBPF_PARSER_PATH)));
+      thread_local_xrp_context_->Reset(new XRPContext(get_bpf_path(), is_bpfof()));
     }
 
     sv->current->Get(
@@ -2400,7 +2400,7 @@ std::vector<Status> DBImpl::MultiGet(
       PinnedIteratorsManager pinned_iters_mgr;
 
       if (thread_local_xrp_context_->Get() == nullptr) {
-        thread_local_xrp_context_->Reset(new XRPContext(std::string(EBPF_PARSER_PATH)));
+        thread_local_xrp_context_->Reset(new XRPContext(get_bpf_path(), is_bpfof()));
       }
 
       super_version->current->Get(read_options, lkey, &pinnable_val,
@@ -5116,7 +5116,7 @@ Status DBImpl::GetLatestSequenceForKey(
     PinnedIteratorsManager pinned_iters_mgr;
 
     if (thread_local_xrp_context_->Get() == nullptr) {
-      thread_local_xrp_context_->Reset(new XRPContext(std::string(EBPF_PARSER_PATH)));
+      thread_local_xrp_context_->Reset(new XRPContext(get_bpf_path(), is_bpfof()));
     }
 
     sv->current->Get(read_options, lkey, /*value=*/nullptr, /*columns=*/nullptr,
