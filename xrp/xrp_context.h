@@ -7,15 +7,13 @@
 namespace ROCKSDB_NAMESPACE {
 
 #define EBPF_DATA_BUFFER_SIZE 4096
-#define EBPF_SCRATCH_BUFFER_SIZE (1 << 21) // (4 * 4096)
+#define EBPF_SCRATCH_BUFFER_SIZE 4096 // (4 * 4096)
 #define EBPF_BLOCK_SIZE 512
 #define PAGE_SIZE 4096
 
 #define SYS_READ_XRP 445
 
 #define EBPF_PARSER_PATH "/mydata/tal_rocksdb/ebpf/parser.o"
-#define XRP_ENABLED true
-#define SAMPLE_RATE 100
 
 // Value types encoded as the last component of internal keys
 // Incomplete list, see db/dbformat.h
@@ -104,6 +102,7 @@ class XRPContext {
     Status Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched);
     void Reset(void);
     void AddFile(const BlockBasedTable &sst, struct file_context &input_file);
+    uint32_t GetSampleRate();
 
 
    private:

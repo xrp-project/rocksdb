@@ -35,7 +35,7 @@ XRPContext::XRPContext(const std::string &ebpf_program) {
     if (data_buf == MAP_FAILED)
         throw std::runtime_error("mmap() failed");
 
-    memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
+    memset(data_buf, 0, huge_page_size);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
     ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
 }
@@ -159,6 +159,22 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     std::cout << "bytes_to_read: " << file_ctx->bytes_to_read << std::endl;
     std::cout << "offset: " << file_ctx->offset << std::endl;
 */
+}
+
+uint32_t XRPContext::GetSampleRate() {
+    // random default sample rate
+    uint32_t rate = 100;
+
+    const char* sample_var = std::getenv("XRP_SAMPLE_RATE"); 
+    if (sample_var != nullptr) {
+        try {
+            rate = std::stoi(sample_var);
+        } catch (const std::invalid_argument& ex) {
+            std::cerr << "Error: invalid argument for XRP_SAMPLE_RATE: " << ex.what() << std::endl;
+        }
+    }
+
+    return rate;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

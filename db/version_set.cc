@@ -2291,11 +2291,13 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 &storage_info_.file_indexer_, user_comparator(),
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
-
-  bool sample = !XRP_ENABLED || Random::GetTLSInstance()->OneIn(SAMPLE_RATE); 
-  Slice *s; // value will be stored in slice
-  //bool sample = false;
+  
   xrp->Reset();
+  uint32_t sample_rate = xrp->GetSampleRate(); 
+
+  bool sample = Random::GetTLSInstance()->OneIn(sample_rate); 
+  Slice *s; // value will be stored in slice
+  
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
