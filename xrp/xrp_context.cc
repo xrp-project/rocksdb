@@ -119,9 +119,7 @@ void XRPContext::Reset(void) {
         memset(data_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
     else
         memset(data_buf, 0, huge_page_size);
-    memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 
-    memset(data_buf, 0, huge_page_size);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 }
 
