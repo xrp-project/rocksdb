@@ -2297,7 +2297,8 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
   bool sample = Random::GetTLSInstance()->OneIn(sample_rate); 
   Slice *s; // value will be stored in slice
-  
+  BlockBasedTable *bbt = nullptr; 
+
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
@@ -2331,7 +2332,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
       }
     }
   
-    BlockBasedTable *bbt = static_cast<BlockBasedTable *>(t);
+    bbt = static_cast<BlockBasedTable *>(t);
 
     struct file_context xrp_file = {0};
 
@@ -2449,8 +2450,6 @@ get_out:
       return;
   }
 
-
-
   if (db_statistics_ != nullptr) {
     get_context.ReportCounters();
   }
@@ -2475,10 +2474,15 @@ get_out:
       value->PinSelf();
     }
   } else {
-    if (key_exists != nullptr) {
-      *key_exists = false;
+    // key does not exist, so resubmit with normal read path 
+    if (sample || bbt == nullptr) {
+      *status = Status::NotFound();
+      return;
     }
-    *status = Status::NotFound(); // Use an empty error message for speed
+
+    sample = true; // ensure NotFound if key actually doesn't exist
+    *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), true /* skip filters */);
+    goto get_out;
   }
 }
 
