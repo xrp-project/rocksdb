@@ -43,7 +43,6 @@ XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): i
     if (!scratch_buf)
         throw std::runtime_error("aligned_alloc() failed");
 
-    memset(data_buf, 0, huge_page_size);
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
     ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
 }
@@ -117,8 +116,8 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
 void XRPContext::Reset(void) {
     if (this->is_bpfof)
         memset(data_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
-    else
-        memset(data_buf, 0, huge_page_size);
+ //   else
+ //       memset(data_buf, 0, huge_page_size);
 
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
 }
