@@ -2293,9 +2293,17 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   FdWithKeyRange* f = fp.GetNextFile();
   
   xrp->Reset();
-  uint32_t sample_rate = xrp->GetSampleRate(); 
 
-  bool sample = Random::GetTLSInstance()->OneIn(sample_rate); 
+  bool sample;
+  uint32_t sample_rate = xrp->GetSampleRate(); 
+  if (sample_rate == 0) {
+    sample = false;
+  } else if (sample_rate == 1) {
+    sample = true;
+  } else {
+    sample = Random::GetTLSInstance()->OneIn(sample_rate); 
+  }
+
   Slice *s; // value will be stored in slice
   BlockBasedTable *bbt = nullptr; 
   Cache::Handle* handle = nullptr;
@@ -2317,7 +2325,6 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
     auto& fd = f->file_metadata->fd;
     TableReader* t = fd.table_reader;
-    
 
     auto skip_filters = IsFilterSkipped(static_cast<int>(fp.GetHitFileLevel()),fp.IsHitFileLastInLevel());
     
@@ -2346,7 +2353,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
         if (db_statistics_ != nullptr) {
           get_context.ReportCounters();
         }
-        return;
+        goto exit;
       }
     } else {
       // only look in cache. we don't care about status
@@ -2384,7 +2391,7 @@ get_out:
     if (db_statistics_ != nullptr) {
       get_context.ReportCounters();
     }
-    return;
+    goto exit;
   }
 
   // report the counters before returning
@@ -2426,29 +2433,29 @@ get_out:
             if (status->IsIncomplete()) {
               get_context.MarkKeyMayExist();
             }
-            return;
+            goto exit;
           }
         }
       }
 
-      return;
+      goto exit;
     case GetContext::kDeleted:
       // Use empty error message for speed
       *status = Status::NotFound();
-      return;
+      goto exit;
     case GetContext::kCorrupt:
       *status = Status::Corruption("corrupted key for ", user_key);
-      return;
+      goto exit;
     case GetContext::kUnexpectedBlobIndex:
       ROCKS_LOG_ERROR(info_log_, "Encounter unexpected blob index.");
       *status = Status::NotSupported(
           "Encounter unexpected blob index. Please open DB with "
           "ROCKSDB_NAMESPACE::blob_db::BlobDB instead.");
-      return;
+      goto exit;
     case GetContext::kUnexpectedWideColumnEntity:
       *status =
           Status::NotSupported("Encountered unexpected wide-column entity");
-      return;
+      goto exit;
   }
 
   if (db_statistics_ != nullptr) {
@@ -2457,12 +2464,12 @@ get_out:
   if (GetContext::kMerge == get_context.State()) {
     if (!do_merge) {
       *status = Status::OK();
-      return;
+      goto exit;
     }
     if (!merge_operator_) {
       *status =  Status::InvalidArgument(
           "merge_operator is not properly initialized.");
-      return;
+      goto exit;
     }
     // merge_operands are in saver and we hit the beginning of the key history
     // do a final merge of nullptr and operands;
