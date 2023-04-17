@@ -22,6 +22,19 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+void handleCompaction(int sec) {
+    const char* old_rate = getenv("XRP_SAMPLE_RATE");
+    std::cerr << "Setting sample rate to 1" << std::endl;
+
+    putenv((char *)"XRP_SAMPLE_RATE=1");
+    std::this_thread::sleep_for(std::chrono::seconds(sec));
+
+    std::cerr << "Setting sample rate to previous rate" << std::endl;
+
+    std::string restore_rate = "XRP_SAMPLE_RATE=" + std::string(old_rate);
+    putenv(const_cast<char*>(restore_rate.c_str()));
+}
+
 XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): is_bpfof(_is_bpfof) {
     if (this->is_bpfof){
         std::cout << "XRPContext: using bpfof" << std::endl;

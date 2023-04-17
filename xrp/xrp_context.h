@@ -92,6 +92,7 @@ struct rocksdb_ebpf_context {
     struct file_array file_array;
 };
 
+void handleCompaction(int sec);
 
 class XRPContext {
    public:

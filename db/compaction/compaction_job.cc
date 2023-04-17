@@ -16,6 +16,9 @@
 #include <set>
 #include <utility>
 #include <vector>
+#include <iostream>
+#include <thread>
+
 
 #include "db/blob/blob_counting_iterator.h"
 #include "db/blob/blob_file_addition.h"
@@ -56,6 +59,8 @@
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
 #include "util/stop_watch.h"
+
+#include "xrp/xrp_context.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -930,6 +935,11 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
   }
 
   CleanupCompaction();
+
+  std::cerr << "compaction happening!" << std::endl;
+  std::thread t(handleCompaction, 20);
+  t.detach();
+  
   return status;
 }
 
