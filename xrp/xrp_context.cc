@@ -86,7 +86,7 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
     if (ctx->stage == kDataStage) {
         request_size = ctx->handle.size + ctx->footer_len + BlockBasedTable::kBlockTrailerSize;
 
-        request_size = (request_size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
+        request_size = (request_size + (EBPF_BLOCK_SIZE - 1)) & ~(EBPF_BLOCK_SIZE - 1);
     } else if (ctx->stage == kIndexStage) {
         request_size = ctx->handle.size;
     } else {
