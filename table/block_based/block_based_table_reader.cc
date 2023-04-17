@@ -2190,6 +2190,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
   if (!may_match) {
     // XRP: Filter found (with no-io), and doesn't match. We can skip file.
     xrp_file->fd = -1;
+    std::cout << "may match" << std::endl;
     return Status::OK();
   }
 

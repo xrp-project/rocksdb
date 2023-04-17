@@ -2482,7 +2482,9 @@ get_out:
     }
 
     sample = true; // ensure NotFound if key actually doesn't exist
-    *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), true /* skip filters */);
+    *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), false /* skip filters */);
+
+    std::cerr << "XRP Failed: Read fallback to RocksDB read" << std::endl;
     goto get_out;
   }
 
