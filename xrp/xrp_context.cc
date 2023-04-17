@@ -28,22 +28,25 @@ void handleCompaction(int sec) {
         return;
     }
     
+    /*
     const char* old_rate = getenv("XRP_SAMPLE_RATE");
 
     if (old_rate == nullptr) {
         std::cerr << "XRP_SAMPLE_RATE environment variable not found." << std::endl;
+        putenv((char *) "XRP_SAMPLE_RATE=10");
         return;
     }
+    */
 
     std::cerr << "Setting sample rate to 1" << std::endl;
 
     putenv((char *)"XRP_SAMPLE_RATE=1");
     std::this_thread::sleep_for(std::chrono::seconds(sec));
 
-    std::cerr << "Setting sample rate to previous rate" << std::endl;
+    std::cerr << "Setting sample rate to 10" << std::endl;
 
-    std::string restore_rate = "XRP_SAMPLE_RATE=" + std::string(old_rate);
-    putenv(const_cast<char*>(restore_rate.c_str()));
+    //std::string restore_rate = "XRP_SAMPLE_RATE=" + std::string(old_rate);
+    putenv((char *)"XRP_SAMPLE_RATE=10");
 }
 
 XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): is_bpfof(_is_bpfof) {
