@@ -23,7 +23,18 @@
 namespace ROCKSDB_NAMESPACE {
 
 void handleCompaction(int sec) {
+    const char* adapt = getenv("XRP_ADAPTIVE_RATE");
+    if (adapt == nullptr) {
+        return;
+    }
+    
     const char* old_rate = getenv("XRP_SAMPLE_RATE");
+
+    if (old_rate == nullptr) {
+        std::cerr << "XRP_SAMPLE_RATE environment variable not found." << std::endl;
+        return;
+    }
+
     std::cerr << "Setting sample rate to 1" << std::endl;
 
     putenv((char *)"XRP_SAMPLE_RATE=1");
