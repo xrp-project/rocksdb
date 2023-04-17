@@ -2170,8 +2170,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
   ReadOptions read_options = ReadOptions();
   read_options.read_tier = kBlockCacheTier;
 
-  bool hasFilter = false;
-  bool hasData = false;
+  bool data_block_in_cache = false;
   //bool hasIndex = false;
 
   // First check the full filter
@@ -2190,7 +2189,8 @@ Status BlockBasedTable::CacheGet(const Slice& key,
 
   if (!may_match) {
     // XRP: Filter found (with no-io), and doesn't match. We can skip file.
-    hasFilter = true;
+    xrp_file->fd = -1;
+    return Status::OK();
   }
 
   IndexBlockIter iiter_on_stack;
@@ -2205,11 +2205,10 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       NewIndexIterator(read_options, need_upper_bound_check, &iiter_on_stack,
                         get_context, &lookup_context);
 
-  if (!iiter->status().IsIncomplete()) {
+  if (iiter->status().IsIncomplete()) {
     // We were able to look up the index block, start parsing at data block
     //hasIndex = true;
-  } else {
-    return Status::NotFound();
+    return Status::OK();
   }
 
   std::unique_ptr<InternalIteratorBase<IndexValue>> iiter_unique_ptr;
@@ -2277,7 +2276,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       done = true;
 
       // XRP: key cannot be in data block, so we skip file
-      hasData = true;
+      data_block_in_cache = true;
     } else {
       // Call the *saver function on each entry/block until it returns false
       for (; biter.Valid(); biter.Next()) {
@@ -2298,7 +2297,7 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       s = biter.status();
 
       // Data block has been traversed and no key was found
-      hasData = true;
+      data_block_in_cache = true;
     }
     
     if (done) {
@@ -2311,11 +2310,10 @@ Status BlockBasedTable::CacheGet(const Slice& key,
 
   if (s.ok() && !matched) {
     // XRP: Key is not in data block, we can skip file
-    hasData = true;
+    data_block_in_cache = true;
   }
 
-  if (hasFilter || hasData) {
-    // skip file
+  if (data_block_in_cache) {
     xrp_file->fd = -1; // very bad implementation atm
   }
  

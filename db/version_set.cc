@@ -2360,15 +2360,8 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
       *status = bbt->CacheGet(ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), skip_filters, &xrp_file);
     }
     
-    // check if cache or sample found the value
-    switch (get_context.State()) {
-      case GetContext::kNotFound:
-        // Keep searching in other files
-        break;
-      case GetContext::kMerge:
-        break;
-      default:
-        goto get_out;
+    if (get_context.State() == GetContext::kFound) {
+      goto get_out;
     }
 
     // if using XRP, add to XRP file array
