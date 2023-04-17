@@ -2439,8 +2439,7 @@ get_out:
       *status = Status::NotFound();
       goto exit;
     case GetContext::kCorrupt:
-      *status = Status::Corruption("corrupted key for ", user_key);
-      goto exit;
+      break;
     case GetContext::kUnexpectedBlobIndex:
       ROCKS_LOG_ERROR(info_log_, "Encounter unexpected blob index.");
       *status = Status::NotSupported(
