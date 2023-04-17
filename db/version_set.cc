@@ -2360,7 +2360,9 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
       *status = bbt->CacheGet(ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), skip_filters, &xrp_file);
     }
     
-    if (get_context.State() == GetContext::kFound) {
+    if (get_context.State() == GetContext::kFound 
+      || get_context.State() == GetContext::kDeleted 
+      || get_context.State() == GetContext::kCorrupt) {
       goto get_out;
     }
 
@@ -2484,7 +2486,7 @@ get_out:
     sample = true; // ensure NotFound if key actually doesn't exist
     *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), false /* skip filters */);
 
-    std::cerr << "XRP Failed: Read fallback to RocksDB read" << std::endl;
+    std::cerr << "XRP Failed: Read fallback to RocksDB read path" << std::endl;
     goto get_out;
   }
 
