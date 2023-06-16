@@ -445,11 +445,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
 
     context->next_addr[0] = round_down(rocksdb_ctx->handle.offset, EBPF_BLOCK_SIZE);
     //bpf_printk("Address for data block: %llu\n", context->next_addr[0]);
-    rocksdb_ctx->footer_len = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
-    data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    rocksdb_ctx->offset_in_block = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
+    data_size = rocksdb_ctx->offset_in_block + rocksdb_ctx->handle.size + kBlockTrailerSize;
     context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
     //bpf_printk("data block size: %llu\n", context->size[0]);
-    //bpf_printk("data block offset: %llu\n", rocksdb_ctx->footer_len);
+    //bpf_printk("data block offset: %llu\n", rocksdb_ctx->offset_in_block);
     context->done = false;
 
     return found;
@@ -540,8 +540,8 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
     // need previous multiple of 512
     context->next_addr[0] = round_down(footer.index_handle.offset, EBPF_BLOCK_SIZE);
     //bpf_printk("Index block offset: %d\n", context->next_addr[0]);
-    rocksdb_ctx->footer_len = footer.index_handle.offset - context->next_addr[0];
-    index_size = rocksdb_ctx->footer_len + footer.index_handle.size + kBlockTrailerSize;
+    rocksdb_ctx->offset_in_block = footer.index_handle.offset - context->next_addr[0];
+    index_size = rocksdb_ctx->offset_in_block + footer.index_handle.size + kBlockTrailerSize;
 
     context->size[0] = __ALIGN_KERNEL(index_size, PAGE_SIZE);
     context->done = false;
@@ -566,11 +566,11 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     curr_idx = rocksdb_ctx->file_array.curr_idx;
     rocksdb_ctx->handle.offset = rocksdb_ctx->file_array.array[curr_idx].offset;
     rocksdb_ctx->handle.size = rocksdb_ctx->file_array.array[curr_idx].bytes_to_read;
-    rocksdb_ctx->footer_len = rocksdb_ctx->file_array.array[curr_idx].footer_len; // or rocksdb_ctx->handle.offset - context->next_addr[0];
+    rocksdb_ctx->offset_in_block = rocksdb_ctx->file_array.array[curr_idx].offset_in_block; // or rocksdb_ctx->handle.offset - context->next_addr[0];
     rocksdb_ctx->stage = rocksdb_ctx->file_array.array[curr_idx].stage;
 
     // 2. Set the resubmission settings
-    data_size = rocksdb_ctx->footer_len + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    data_size = rocksdb_ctx->offset_in_block + rocksdb_ctx->handle.size + kBlockTrailerSize;
 
     memset(&rocksdb_ctx->data_context, 0, sizeof(rocksdb_ctx->data_context));
     memset(&rocksdb_ctx->varint_context, 0, sizeof(rocksdb_ctx->varint_context));
@@ -593,15 +593,15 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
-        uint64_t footer_offset = rocksdb_ctx->footer_len - MAX_FOOTER_LEN;
+        uint64_t footer_offset = rocksdb_ctx->offset_in_block - MAX_FOOTER_LEN;
         ret = parse_footer(context, footer_offset);
 
         return ret;
     } else if (stage == kIndexStage) {
         // handle index block
-        bpf_printk("Index start: %d\n", rocksdb_ctx->footer_len);
+        bpf_printk("Index start: %d\n", rocksdb_ctx->offset_in_block);
 
-        ret = parse_index_block(context, rocksdb_ctx->footer_len);
+        ret = parse_index_block(context, rocksdb_ctx->offset_in_block);
 
         if (ret == 1) // found
             return 0;
@@ -611,7 +611,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         return 0;
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
-        ret = parse_data_block(context, rocksdb_ctx->footer_len);
+        ret = parse_data_block(context, rocksdb_ctx->offset_in_block);
         rocksdb_ctx->found = ret == 1;
 
         if (ret == 1)

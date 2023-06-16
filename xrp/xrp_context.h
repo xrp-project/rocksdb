@@ -51,7 +51,7 @@ union varint_context {
 
 struct file_context {
     uint32_t fd;
-    uint64_t footer_len;
+    uint64_t offset_in_block;
     uint64_t offset;
     uint64_t bytes_to_read;
     enum parse_stage stage;
@@ -78,7 +78,7 @@ struct data_parse_context {
 };
 
 struct rocksdb_ebpf_context {
-    uint64_t footer_len;
+    uint64_t offset_in_block;
     enum parse_stage stage;
     int found;
     char key[MAX_KEY_LEN + 1];

@@ -105,13 +105,13 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
     strncpy(ctx->key, key.data(), key.size());
 
     struct file_context start_file = ctx->file_array.array[0];
-    ctx->footer_len = start_file.footer_len;
+    ctx->offset_in_block = start_file.offset_in_block;
     ctx->stage = start_file.stage; // TODO: change when using block cache
 
     ctx->handle.size = start_file.bytes_to_read;
     ctx->handle.offset = start_file.offset;
     if (ctx->stage == kDataStage) {
-        request_size = ctx->handle.size + ctx->footer_len + BlockBasedTable::kBlockTrailerSize;
+        request_size = ctx->handle.size + ctx->offset_in_block + BlockBasedTable::kBlockTrailerSize;
 
         request_size = (request_size + (EBPF_BLOCK_SIZE - 1)) & ~(EBPF_BLOCK_SIZE - 1);
     } else if (ctx->stage == kIndexStage) {
@@ -152,7 +152,7 @@ void XRPContext::Reset(void) {
 void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_file) {
     const BlockBasedTable::Rep *rep = sst.get_rep();
     BlockHandle index_handle;
-    uint64_t offset, size, footer_len;
+    uint64_t offset, size, offset_in_block;
     uint32_t sst_fd;
     enum parse_stage stage;
 
@@ -171,7 +171,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
 
     if (cache_file.stage == kDataStage) {
         offset = (cache_file.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-        footer_len = cache_file.offset - offset;
+        offset_in_block = cache_file.offset - offset;
 
         size = cache_file.bytes_to_read;
 
@@ -180,15 +180,15 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
         index_handle = rep->footer.index_handle();
 
         offset = (index_handle.offset() / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-        footer_len = index_handle.offset() - offset;
+        offset_in_block = index_handle.offset() - offset;
 
-        size = footer_len + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
+        size = offset_in_block + index_handle.size() + BlockBasedTable::kBlockTrailerSize;
         size = (size + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
         stage = kIndexStage;
     }
 
     file_ctx->fd = sst_fd;
-    file_ctx->footer_len = footer_len;
+    file_ctx->offset_in_block = offset_in_block;
     file_ctx->stage = stage;
 
     file_ctx->bytes_to_read = size;
@@ -197,7 +197,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     // print out all of the above
     /*
     std::cout << "fd: " << file_ctx->fd << std::endl;
-    std::cout << "footer_len: " << file_ctx->footer_len << std::endl;
+    std::cout << "offset_in_block: " << file_ctx->offset_in_block << std::endl;
     std::cout << "stage: " << file_ctx->stage << std::endl;
     std::cout << "bytes_to_read: " << file_ctx->bytes_to_read << std::endl;
     std::cout << "offset: " << file_ctx->offset << std::endl;
