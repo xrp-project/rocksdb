@@ -71,21 +71,23 @@ static void buffer_release(uint8_t *data_buf, uint8_t *scratch_buf) {
 // Returns offset into sst_fd to read from
 static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context *ctx) {
     struct stat st;
-    uint64_t offset;
+    uint64_t block_offset, footer_offset;
 
     if (fstat(sst_fd, &st) == -1) {
         perror("fstat() failed");
         return -1;
     }
 
-    // Get offset of disk block containing the footer
-    offset = round_down(st.st_size - MAX_FOOTER_LEN, EBPF_BLOCK_SIZE);
+    // Calculate the offset of the footer and the disk block it starts in
+    footer_offset = st.st_size - MAX_FOOTER_LEN;
+    block_offset = round_down(footer_offset, EBPF_BLOCK_SIZE);
 
     // Set up XRP context struct
-    ctx->offset_in_block = st.st_size - offset;
+    ctx->offset_in_block = footer_offset - block_offset;
     ctx->stage = kFooterStage;
     strncpy((char *)&ctx->key, key, strlen(key) + 1);
-    return offset;
+
+    return block_offset;
 }
 
 int main(int argc, char **argv) {

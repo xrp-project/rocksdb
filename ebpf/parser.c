@@ -593,8 +593,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
-        uint64_t footer_offset = rocksdb_ctx->offset_in_block - MAX_FOOTER_LEN;
-        ret = parse_footer(context, footer_offset);
+        ret = parse_footer(context, rocksdb_ctx->offset_in_block);
 
         return ret;
     } else if (stage == kIndexStage) {
