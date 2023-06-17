@@ -23,15 +23,7 @@ static void die(const char *message) {
     exit(1); 
 }
 
-static void __attribute__((unused)) print_block_handle(struct block_handle *handle) {
-    if (handle == NULL)
-        return;
-
-    printf("Offset: %lx\n", handle->offset);
-    printf("Size: %lx\n", handle->size);
-}
-
-int load_bpf_program(char *path) {
+static int load_bpf_program(char *path) {
     struct bpf_object *obj;
     int ret, progfd;
 
@@ -44,13 +36,65 @@ int load_bpf_program(char *path) {
     return progfd;
 }
 
+static int buffer_setup(uint8_t **data_buf, uint8_t **scratch_buf) {
+    const int mmap_flags = MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE;
+
+    // Allocate huge page for the XRP data buffer
+    uint8_t *tmp_data_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, mmap_flags, -1, 0);
+
+    if (tmp_data_buf == MAP_FAILED) {
+        perror("mmap() failed");
+        return -1;
+    }
+
+    // Allocate XRP scratch buffer, aligned to page size
+    if (posix_memalign((void **) scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, EBPF_SCRATCH_BUFFER_SIZE) != 0) {
+        perror("posix_memalign() failed");
+        return -1;
+    }
+
+    *data_buf = tmp_data_buf;
+
+    memset(*data_buf, 0, EBPF_DATA_BUFFER_SIZE);
+    memset(*scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
+
+    return 0;
+}
+
+static void buffer_release(uint8_t *data_buf, uint8_t *scratch_buf) {
+    if (munmap(data_buf, EBPF_DATA_BUFFER_SIZE) != 0)
+        fprintf(stderr, "failed to munmap %p length %lu\n", data_buf, EBPF_DATA_BUFFER_SIZE);
+
+    free(scratch_buf);
+}
+
+// Returns offset into sst_fd to read from
+static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context *ctx) {
+    struct stat st;
+    uint64_t offset;
+
+    if (fstat(sst_fd, &st) == -1) {
+        perror("fstat() failed");
+        return -1;
+    }
+
+    // Get offset of disk block containing the footer
+    offset = round_down(st.st_size - MAX_FOOTER_LEN, EBPF_BLOCK_SIZE);
+
+    // Set up XRP context struct
+    ctx->offset_in_block = st.st_size - offset;
+    ctx->stage = kFooterStage;
+    strncpy((char *)&ctx->key, key, strlen(key) + 1);
+    return offset;
+}
+
 int main(int argc, char **argv) {
     int bpf_fd, sst_fd, out_fd;
+    uint64_t offset;
+    long ret;
     char *filename, *key;
     uint8_t *data_buf, *scratch_buf;
-    uint64_t offset;
-    struct stat st;
-    struct rocksdb_ebpf_context ctx;
+    struct rocksdb_ebpf_context *ctx;
 
     if (argc != 3) {
         printf("usage: ./test <sst-file> <key>\n");
@@ -61,7 +105,7 @@ int main(int argc, char **argv) {
     key = argv[2];
 
     if (strlen(key) > MAX_KEY_LEN) {
-        printf("error: key is longer than 63 chars\n");
+        printf("error: key is longer than %d chars\n", MAX_KEY_LEN);
         exit(1);
     }
 
@@ -70,33 +114,18 @@ int main(int argc, char **argv) {
     if ((sst_fd = open(filename, O_RDONLY | O_DIRECT)) == -1)
         die("open() sst file failed");
 
-    if (fstat(sst_fd, &st) == -1)
-        die("fstat() failed");
+    if (buffer_setup(&data_buf, &scratch_buf) != 0)
+        exit(1);
 
-    offset = ((st.st_size - MAX_FOOTER_LEN) / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
-    printf("footer offset (aligned to 512): %ld\n", offset);
+    ctx = (struct rocksdb_ebpf_context *)scratch_buf;
 
-    data_buf = mmap(NULL, huge_page_size, PROT_READ | PROT_WRITE, MAP_HUGETLB | MAP_HUGE_2MB | MAP_ANON | MAP_PRIVATE, -1, 0);
-    if (data_buf == MAP_FAILED)
-        die("mmap() failed");
+    if ((offset = context_setup(sst_fd, key, ctx)) < 0)
+        exit(1);
 
-    if (posix_memalign((void **) &scratch_buf, EBPF_SCRATCH_BUFFER_SIZE, EBPF_DATA_BUFFER_SIZE) != 0)
-        die("posix_memalign() failed");
+    ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
 
-    memset(data_buf, 0, EBPF_DATA_BUFFER_SIZE);
-    memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
-
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.footer_len = st.st_size - offset;
-    printf("Footer len: %lu\n", ctx.footer_len);
-    ctx.stage = kFooterStage;
-    strncpy((char *)&ctx.key, key, strlen(key) + 1);
-    memcpy(scratch_buf, &ctx, sizeof(ctx));
-
-    long ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
-
-    printf("Return: %ld\n", ret);
-    printf("%s\n", strerror(errno));
+    fprintf(stderr, "read_xrp() return: %ld\n", ret);
+    fprintf(stderr, "%s\n", strerror(errno));
 
     if (ret < 0)
         die("read_xrp() failed");
@@ -107,17 +136,12 @@ int main(int argc, char **argv) {
     if (write(out_fd, data_buf, EBPF_DATA_BUFFER_SIZE) == -1)
         die("write() failed");
 
-    ctx = *(struct rocksdb_ebpf_context *)scratch_buf;
-
-    if (ctx.found == 1)
-        printf("Value found: %s\n", ctx.data_context.value);
+    if (ctx->found == 1)
+        printf("Value found: %s\n", ctx->data_context.value);
     else
         printf("Value not found\n");
 
-    if (munmap(data_buf, EBPF_DATA_BUFFER_SIZE) != 0)
-        fprintf(stderr, "failed to munmap %p length %lu\n", data_buf, EBPF_DATA_BUFFER_SIZE);
-
-    free(scratch_buf);
+    buffer_release(data_buf, scratch_buf);
 
     close(out_fd);
     close(sst_fd);

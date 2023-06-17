@@ -9,6 +9,4 @@
 
 #define EBPF_EINVAL 22
 
-int load_bpf_program(char *path);
-
 #endif
