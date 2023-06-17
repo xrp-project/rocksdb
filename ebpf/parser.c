@@ -232,11 +232,6 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
 
     block_footer = (uint32_t *)(data_block + block_end_offset);
 
-    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
-        return -EBPF_EINVAL;
-
-    block_footer = (uint32_t *)(data_block + block_end_offset);
-
     unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
 
     data_end = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
@@ -624,9 +619,6 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     if (stage == kFooterStage) {
         return parse_footer(context, rocksdb_ctx->offset_in_block);
     } else if (stage == kIndexStage) {
-        // handle index block
-        bpf_printk("Index start: %d\n", rocksdb_ctx->offset_in_block);
-
         ret = parse_index_block(context, rocksdb_ctx->offset_in_block);
 
         if (ret == 1) // found
