@@ -123,6 +123,27 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     return *(unsigned char *)user_key - *(unsigned char *)block_key;
 }
 
+__inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
+    uint32_t varint_delta, varint_return;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+
+    varint_return = decode_varint64(context, offset, MAX_VARINT64_LEN);
+    if (varint_return == 0)
+        return 0;
+
+    varint_delta = varint_return;
+    bh->offset = rocksdb_ctx->varint_context.varint64;
+
+    varint_return = decode_varint64(context, offset + varint_delta, MAX_VARINT64_LEN);
+    if (varint_return == 0)
+        return 0;
+
+    varint_delta += varint_return;
+    bh->size = rocksdb_ctx->varint_context.varint64;
+
+    return varint_delta;
+}
+
 __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint32_t *block_footer) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
@@ -133,6 +154,22 @@ __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, u
     *block_footer = *(uint32_t *)(context->data + block_end_offset);
 
     return 0;
+}
+
+__inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, enum parse_stage stage) {
+    uint64_t block_size;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+
+    memcpy(&rocksdb_ctx->handle, bh, sizeof(struct block_handle));
+
+    context->next_addr[0] = ROUND_DOWN(bh->offset, EBPF_BLOCK_SIZE);
+    rocksdb_ctx->offset_in_block = bh->offset - context->next_addr[0];
+
+    block_size = rocksdb_ctx->offset_in_block + bh->size + kBlockTrailerSize;
+    context->size[0] = ROUND_UP(block_size, PAGE_SIZE);
+
+    rocksdb_ctx->stage = stage;
+    context->done = false;
 }
 
 __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
@@ -239,7 +276,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
 
     unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
 
-    data_end = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+    data_end = block_data_end(data_block_offset, rocksdb_ctx->handle.size, num_restarts);
 
     while (data_offset < data_end && data_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = data_block_loop(context, data_offset);
@@ -387,27 +424,12 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
     return 0;
 }
 
-__inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, enum parse_stage stage) {
-    uint64_t block_size;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-
-    memcpy(&rocksdb_ctx->handle, bh, sizeof(struct block_handle));
-
-    context->next_addr[0] = ROUND_DOWN(bh->offset, EBPF_BLOCK_SIZE);
-    rocksdb_ctx->offset_in_block = bh->offset - context->next_addr[0];
-
-    block_size = rocksdb_ctx->offset_in_block + bh->size + kBlockTrailerSize;
-    context->size[0] = ROUND_UP(block_size, PAGE_SIZE);
-
-    rocksdb_ctx->stage = stage;
-    context->done = false;
-}
-
 __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_block_offset) {
     uint8_t index_type;
     int loop_ret, found = 0, i;
     const int LOOP_COUNTER_THRESH = 2000;
-    uint32_t num_restarts, index_end, block_footer, index_offset = index_block_offset;
+    uint32_t num_restarts, block_footer;
+    uint64_t index_end, index_offset = index_block_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
@@ -425,7 +447,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     // TODO: check index type
     unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
 
-    index_end = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
+    index_end = block_data_end(index_block_offset, rocksdb_ctx->handle.size, num_restarts);
 
     for (i = 0; i < LOOP_COUNTER_THRESH && index_offset < index_end; i++) {
         loop_ret = parse_index_block_loop(context, index_block_offset, index_offset, num_restarts, &found);
@@ -447,27 +469,6 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     prep_next_stage(context, &rocksdb_ctx->index_context.prev_data_handle, kDataStage);
 
     return found;
-}
-
-__inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
-    uint32_t varint_delta, varint_return;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-
-    varint_return = decode_varint64(context, offset, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return 0;
-
-    varint_delta = varint_return;
-    bh->offset = rocksdb_ctx->varint_context.varint64;
-
-    varint_return = decode_varint64(context, offset + varint_delta, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return 0;
-
-    varint_delta += varint_return;
-    bh->size = rocksdb_ctx->varint_context.varint64;
-
-    return varint_delta;
 }
 
 __inline int footer_read_version(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {

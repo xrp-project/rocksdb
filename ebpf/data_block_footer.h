@@ -10,6 +10,8 @@
   (BLOCK_FOOTER_CHECKSUM_LEN + BLOCK_FOOTER_TYPE_LEN + \
    BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
 
+#define BLOCK_FOOTER_RESTART_LEN 4
+
 #define kBlockTrailerSize BLOCK_FOOTER_TYPE_LEN + BLOCK_FOOTER_CHECKSUM_LEN
 
 #define kDataBlockIndexTypeBitShift 31
@@ -31,6 +33,10 @@ static inline void unpack_index_type_and_num_restarts(uint32_t block_footer,
         *num_restarts = block_footer & kNumRestartsMask;
 
     // TODO: check that num_restarts <= kNumMaxRestarts
+}
+
+static inline uint64_t block_data_end(const uint32_t offset, const uint64_t size, const uint32_t num_restarts) {
+    return offset + size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * BLOCK_FOOTER_RESTART_LEN;
 }
 
 #endif  // _PARSER_DATA_BLOCK_FOOTER_H_
