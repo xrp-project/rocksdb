@@ -123,6 +123,18 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     return *(unsigned char *)user_key - *(unsigned char *)block_key;
 }
 
+__inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint32_t *block_footer) {
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    uint32_t block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+
+    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
+        return -1;
+
+    *block_footer = *(uint32_t *)(context->data + block_end_offset);
+
+    return 0;
+}
+
 __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     volatile uint32_t shared_size, non_shared_size, value_length;
     uint32_t varint_return;
@@ -209,9 +221,8 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
 
 __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_block_offset) {
     uint8_t *data_block, index_type;
-    uint32_t num_restarts, data_end, *block_footer, data_offset = data_block_offset, block_end_offset;
+    uint32_t num_restarts, data_end, block_footer, data_offset = data_block_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    volatile uint32_t fake_var = 0;
     int loop_ret, loop_counter = 0, found = 0;
     const int LOOP_COUNTER_THRESH = 2000;
 
@@ -220,19 +231,13 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
 
     data_block = context->data;
 
-    if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + kBlockTrailerSize + BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
+    if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + BLOCK_FOOTER_FIXED_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
 
-    block_end_offset = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
-
-    block_end_offset += fake_var; // prevent compiler from optimizing away bounds check
-
-    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
+    if (read_block_footer(context, data_block_offset, &block_footer) < 0)
         return -EBPF_EINVAL;
 
-    block_footer = (uint32_t *)(data_block + block_end_offset);
-
-    unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
+    unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
 
     data_end = data_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
 
@@ -387,9 +392,8 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     uint8_t *index_block, index_type;
     int loop_ret, found = 0, i;
     const int LOOP_COUNTER_THRESH = 2000;
-    uint32_t num_restarts, index_end, *block_footer, index_offset = index_block_offset, block_end_offset;
+    uint32_t num_restarts, index_end, block_footer, index_offset = index_block_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    volatile uint32_t fake_var = 0;
     uint64_t data_size;
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
@@ -403,16 +407,10 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
 
-    block_end_offset = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
-
-    block_end_offset += fake_var; // prevent compiler from optimizing away bounds check
-
-    if (block_end_offset > EBPF_DATA_BUFFER_SIZE - 4)
+    if (read_block_footer(context, index_block_offset, &block_footer) < 0)
         return -EBPF_EINVAL;
 
-    block_footer = (uint32_t *)(index_block + block_end_offset);
-
-    unpack_index_type_and_num_restarts(*block_footer, &index_type, &num_restarts);
+    unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
     // TODO: check index type
 
     index_end = index_block_offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN - num_restarts * 4;
