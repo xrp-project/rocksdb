@@ -80,7 +80,7 @@ static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context
 
     // Calculate the offset of the footer and the disk block it starts in
     footer_offset = st.st_size - MAX_FOOTER_LEN;
-    block_offset = round_down(footer_offset, EBPF_BLOCK_SIZE);
+    block_offset = ROUND_DOWN(footer_offset, EBPF_BLOCK_SIZE);
 
     // Set up XRP context struct
     ctx->offset_in_block = footer_offset - block_offset;

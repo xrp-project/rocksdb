@@ -443,11 +443,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
 
     rocksdb_ctx->stage = kDataStage;
 
-    context->next_addr[0] = round_down(rocksdb_ctx->handle.offset, EBPF_BLOCK_SIZE);
+    context->next_addr[0] = ROUND_DOWN(rocksdb_ctx->handle.offset, EBPF_BLOCK_SIZE);
     //bpf_printk("Address for data block: %llu\n", context->next_addr[0]);
     rocksdb_ctx->offset_in_block = rocksdb_ctx->handle.offset - context->next_addr[0]; // can also mask with EBPF_BLOCK_SIZE - 1
     data_size = rocksdb_ctx->offset_in_block + rocksdb_ctx->handle.size + kBlockTrailerSize;
-    context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
+    context->size[0] = ROUND_UP(data_size, PAGE_SIZE);
     //bpf_printk("data block size: %llu\n", context->size[0]);
     //bpf_printk("data block offset: %llu\n", rocksdb_ctx->offset_in_block);
     context->done = false;
@@ -455,96 +455,125 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     return found;
 }
 
-__noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offset) {
-    const uint8_t *footer_ptr = context->data;
-    uint32_t varint_return;
-    uint64_t index_size, footer_ptr_offset = footer_offset;
-    struct footer footer;
+__inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
+    uint32_t varint_delta, varint_return;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
-    if (footer_offset > EBPF_DATA_BUFFER_SIZE - MAX_FOOTER_LEN || footer_offset < 0)
-        return -EBPF_EINVAL;
+    varint_return = decode_varint64(context, offset, MAX_VARINT64_LEN);
+    if (varint_return == 0)
+        return 0;
 
-    footer_ptr = context->data;
-    footer_ptr_offset += MAX_FOOTER_LEN - MAGIC_NUM_LEN;
+    varint_delta = varint_return;
+    bh->offset = rocksdb_ctx->varint_context.varint64;
 
-    // read magic number
-    footer.magic_number = *(uint64_t *)(footer_ptr + footer_ptr_offset);
+    varint_return = decode_varint64(context, offset + varint_delta, MAX_VARINT64_LEN);
+    if (varint_return == 0)
+        return 0;
 
-    if (footer.magic_number == BLOCK_MAGIC_NUMBER) {
-        // read version
-        footer_ptr_offset -= VERSION_LEN;
-        footer.version = *(uint32_t *)(footer_ptr + footer_ptr_offset);
+    varint_delta += varint_return;
+    bh->size = rocksdb_ctx->varint_context.varint64;
 
-        if (!valid_format_version(footer.version)) {
-            bpf_printk("Invalid format version: %u", footer.version);
-            return -EBPF_EINVAL;
-        }
+    return varint_delta;
+}
 
-        // read checksum type
-        footer.checksum = *(uint8_t *)(footer_ptr + footer_offset);
-        if (!valid_checksum_type(footer.checksum)) {
-            bpf_printk("Invalid checksum type: %u", footer.checksum);
-            return -EBPF_EINVAL;
-        }
+__inline int footer_read_version(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
+    footer->version = *(uint32_t *)(footer_ptr + footer_offset + VERSION_OFFSET);
 
-        // set pointer to start of block handles
-        footer_ptr_offset = footer_offset + CHECKSUM_LEN;
-    } else if (footer.magic_number == LEGACY_BLOCK_MAGIC_NUMBER) {
-        footer.version = kLegacyFormatVersion;
-        footer.checksum = kLegacyChecksumType;
-
-        // set pointer to start of block handles
-        footer_ptr_offset -= 2 * MAX_BLOCK_HANDLE_LEN;
-    } else {
-        bpf_printk("Invalid magic number: %lx\n", footer.magic_number);
-        return -EBPF_EINVAL;
+    if (!valid_format_version(footer->version)) {
+        bpf_printk("Invalid format version: %u\n", footer->version);
+        return -1;
     }
 
-    // Metaindex block-handle parsing
-    varint_return = decode_varint64(context, footer_ptr_offset, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return -EBPF_EINVAL;
+    return 0;
+}
 
-    footer_ptr_offset += varint_return;
-    footer.metaindex_handle.offset = rocksdb_ctx->varint_context.varint64;
+__inline int footer_read_checksum(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
+    footer->checksum = *(uint8_t *)(footer_ptr + footer_offset + CHECKSUM_OFFSET);
 
-    varint_return = decode_varint64(context, footer_ptr_offset, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return -EBPF_EINVAL;
+    if (!valid_checksum_type(footer->checksum)) {
+        bpf_printk("Invalid checksum type: %u\n", footer->checksum);
+        return -1;
+    }
 
-    footer_ptr_offset += varint_return;
-    footer.metaindex_handle.size = rocksdb_ctx->varint_context.varint64;
+    return 0;
+}
 
-    // Index block-handle parsing
-    varint_return = decode_varint64(context, footer_ptr_offset, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return -EBPF_EINVAL;
+// Returns offset within the footer to the footer block handles
+__inline int64_t footer_read_metadata(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
+    footer->magic_number = *(uint64_t *)(footer_ptr + footer_offset + MAGIC_NUMBER_OFFSET);
 
-    footer_ptr_offset += varint_return;
-    footer.index_handle.offset = rocksdb_ctx->varint_context.varint64;
+    if (footer->magic_number == BLOCK_MAGIC_NUMBER) {
+        if (footer_read_version(footer_ptr, footer, footer_offset) < 0)
+            return -1;
 
-    varint_return = decode_varint64(context, footer_ptr_offset, MAX_VARINT64_LEN);
-    if (varint_return == 0)
-        return -EBPF_EINVAL;
+        if (footer_read_checksum(footer_ptr, footer, footer_offset) < 0)
+            return -1;
 
-    footer_ptr_offset += varint_return;
-    footer.index_handle.size = rocksdb_ctx->varint_context.varint64;
+    } else if (footer->magic_number == LEGACY_BLOCK_MAGIC_NUMBER) {
+        footer->version = kLegacyFormatVersion;
+        footer->checksum = kLegacyChecksumType;
+    } else {
+        bpf_printk("Invalid magic number: %lx\n", footer->magic_number);
+        return -1;
+    }
 
-    //bpf_printk("Index block offset: %ld\n", footer.index_handle.offset);
-    //bpf_printk("Index block size: %ld\n", footer.index_handle.size);
+    return 0;
+}
 
-    memcpy(&rocksdb_ctx->handle, &footer.index_handle, sizeof(struct block_handle));
+// Requires footer->version to be set
+__inline uint32_t footer_read_block_handles(struct bpf_xrp *context, struct footer *footer, const uint64_t footer_offset) {
+    uint32_t varint_delta;
+    uint64_t footer_ptr_offset = footer_offset + bh_offset(footer->version);
+
+    // Metaindex block-handle
+    varint_delta = read_block_handle(context, &footer->metaindex_handle, footer_ptr_offset);
+    if (varint_delta == 0)
+        return -1;
+
+    // Index block-handle
+    if (read_block_handle(context, &footer->index_handle, footer_ptr_offset + varint_delta) == 0)
+        return -1;
+
+    return 0;
+}
+
+__inline void footer_prep_next_stage(struct bpf_xrp *context, struct footer *footer) {
+    uint64_t index_size;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+
+    memcpy(&rocksdb_ctx->handle, &footer->index_handle, sizeof(struct block_handle));
+
+    context->next_addr[0] = ROUND_DOWN(footer->index_handle.offset, EBPF_BLOCK_SIZE);
+    rocksdb_ctx->offset_in_block = footer->index_handle.offset - context->next_addr[0];
+
+    index_size = rocksdb_ctx->offset_in_block + footer->index_handle.size + kBlockTrailerSize;
+    context->size[0] = ROUND_UP(index_size, PAGE_SIZE);
+
     rocksdb_ctx->stage = kIndexStage;
-
-    // need previous multiple of 512
-    context->next_addr[0] = round_down(footer.index_handle.offset, EBPF_BLOCK_SIZE);
-    //bpf_printk("Index block offset: %d\n", context->next_addr[0]);
-    rocksdb_ctx->offset_in_block = footer.index_handle.offset - context->next_addr[0];
-    index_size = rocksdb_ctx->offset_in_block + footer.index_handle.size + kBlockTrailerSize;
-
-    context->size[0] = __ALIGN_KERNEL(index_size, PAGE_SIZE);
     context->done = false;
+}
+
+__noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offset) {
+    /*
+     * Verifier thinks that footer.index_handle may be uninitialized in
+     * footer_prep_next_stage(). While footer_read_*() may fail before setting
+     * all footer fields, we will error out in those cases, so this isn't an
+     * issue.
+     * 
+     * Hack: zero-initialize `footer` to appease the verifier.
+     */
+    struct footer footer = {0};
+
+    if (footer_offset < 0 || footer_offset > EBPF_DATA_BUFFER_SIZE - MAX_FOOTER_LEN)
+        return -EBPF_EINVAL;
+
+    if (footer_read_metadata(context->data, &footer, footer_offset) < 0)
+        return -EBPF_EINVAL;
+
+    if (footer_read_block_handles(context, &footer, footer_offset) < 0)
+        return -EBPF_EINVAL;
+
+    footer_prep_next_stage(context, &footer);
 
     return 0;
 }
@@ -577,8 +606,8 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     memset(&rocksdb_ctx->index_context, 0, sizeof(rocksdb_ctx->index_context));
 
     context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;
-    context->next_addr[0] = round_down(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
-    context->size[0] = __ALIGN_KERNEL(data_size, PAGE_SIZE);
+    context->next_addr[0] = ROUND_DOWN(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
+    context->size[0] = ROUND_UP(data_size, PAGE_SIZE);
     context->done = false;
     return 0;
 }
@@ -593,9 +622,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
-        ret = parse_footer(context, rocksdb_ctx->offset_in_block);
-
-        return ret;
+        return parse_footer(context, rocksdb_ctx->offset_in_block);
     } else if (stage == kIndexStage) {
         // handle index block
         bpf_printk("Index start: %d\n", rocksdb_ctx->offset_in_block);
@@ -615,8 +642,8 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
 
         if (ret == 1)
             ret = 0;
+
         if (!rocksdb_ctx->found){
-        
             next_sst_file(context);
             return 0;
         }

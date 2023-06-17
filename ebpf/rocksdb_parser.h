@@ -36,7 +36,11 @@
 #define LEGACY_FOOTER_LEN (2 * MAX_BLOCK_HANDLE_LEN + MAGIC_NUM_LEN)
 #define MAX_FOOTER_LEN FOOTER_LEN // new footer > legacy footer
 
-#define MAX_VARINT32_LEN 5
+#define CHECKSUM_OFFSET 0
+#define BLOCK_HANDLE_OFFSET CHECKSUM_LEN
+#define LEGACY_BLOCK_HANDLE_OFFSET (MAX_FOOTER_LEN - MAGIC_NUM_LEN - 2 * MAX_BLOCK_HANDLE_LEN)
+#define VERSION_OFFSET (CHECKSUM_LEN + 2 * MAX_BLOCK_HANDLE_LEN)
+#define MAGIC_NUMBER_OFFSET (MAX_FOOTER_LEN - MAGIC_NUM_LEN)
 
 // Magic numbers
 #define BLOCK_MAGIC_NUMBER 0x88e241b785f4cff7ull // kBlockBasedTableMagicNumber
@@ -69,6 +73,10 @@ static inline int valid_checksum_type(uint8_t checksum_type) {
 
 static inline int valid_format_version(uint32_t version) {
     return version <= kLatestFormatVersion;
+}
+
+static inline int bh_offset(uint32_t version) {
+    return version == kLegacyFormatVersion ? LEGACY_BLOCK_HANDLE_OFFSET : BLOCK_HANDLE_OFFSET;
 }
 
 // The index type that will be used for this table
@@ -211,8 +219,7 @@ struct rocksdb_ebpf_context {
     struct file_array file_array;
 };
 
-static inline int round_down(int x, int alignment) {
-    return (x / alignment) * alignment;
-}
+#define ROUND_DOWN(x, alignment) (((x) / (alignment)) * (alignment))
+#define ROUND_UP(x, alignment) __ALIGN_KERNEL((x), (alignment))
 
 #endif // _EBPF_ROCKSDB_PARSER_H_
