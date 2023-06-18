@@ -228,7 +228,7 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
 
 __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     volatile uint32_t value_length;
-    uint32_t varint_return, bytes_read;
+    uint32_t bytes_read;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint8_t *data_block = context->data;
     uint64_t packed_type_seq, seq;
@@ -241,11 +241,10 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += bytes_read;
 
     // Read value length
-    varint_return = decode_varint32(context, data_offset, MAX_VARINT32_LEN);
-    if (varint_return == 0)
+    if ((bytes_read = decode_varint32(context, data_offset, MAX_VARINT32_LEN)) == 0)
         return -EBPF_EINVAL;
 
-    data_offset += varint_return;
+    data_offset += bytes_read;
     value_length = rocksdb_ctx->varint_context.varint32;
 
     // Remove internal footer from key
@@ -277,6 +276,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
         rocksdb_ctx->data_context.value[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
 
     rocksdb_ctx->data_context.value[(value_length & MAX_VALUE_LEN)] = '\0';
+
     return 1;
 }
 
@@ -330,10 +330,10 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
 }
 
 __noinline int index_block_loop(struct bpf_xrp *context, uint64_t index_offset) {
-    uint32_t varint_return, bytes_read;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     struct block_handle tmp_data_handle;
     struct key_size key_size;
+    uint32_t bytes_read;
 
     if ((bytes_read = read_key_sizes(context, &key_size, index_offset)) == 0)
         return -EBPF_EINVAL;
@@ -346,19 +346,19 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t index_offset) 
     index_offset += key_size.non_shared_size & MAX_KEY_LEN;
 
     if (key_size.shared_size == 0) {
-        varint_return = read_block_handle(context, &tmp_data_handle, index_offset);
-        if (varint_return == 0)
+        bytes_read = read_block_handle(context, &tmp_data_handle, index_offset);
+        if (bytes_read == 0)
             return -EBPF_EINVAL;
 
-        index_offset += varint_return;
+        index_offset += bytes_read;
     } else {
         int64_t delta_size;
 
-        varint_return = decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN);
-        if (varint_return == 0)
+        bytes_read = decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN);
+        if (bytes_read == 0)
             return -EBPF_EINVAL;
 
-        index_offset += varint_return;
+        index_offset += bytes_read;
         delta_size = rocksdb_ctx->varint_context.varsigned64;
 
         // struct IndexValue::EncodeTo
