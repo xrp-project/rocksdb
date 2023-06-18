@@ -158,6 +158,15 @@ struct footer {
 #define MAX_KEY_LEN 63
 #define MAX_VALUE_LEN 255
 
+struct key_size {
+    uint32_t shared_size;
+    uint32_t non_shared_size;
+};
+
+static inline uint32_t KEY_SIZE(struct key_size *key_size) {
+    return key_size->shared_size + key_size->non_shared_size;
+}
+
 enum parse_stage {
     kFooterStage = 0x0,
     kIndexStage = 0x1,
