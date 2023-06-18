@@ -6,6 +6,7 @@
 #include <sys/mman.h>   // for madvise()
 #include <sys/param.h>  // for MAX()
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <bpf/bpf.h>
@@ -96,6 +97,7 @@ int main(int argc, char **argv) {
     long ret;
     char *filename, *key;
     uint8_t *data_buf, *scratch_buf;
+    clock_t t;
     struct rocksdb_ebpf_context *ctx;
 
     if (argc != 3) {
@@ -111,7 +113,13 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    t = clock();
+
     bpf_fd = load_bpf_program("parser.o");
+
+    t = clock() - t;
+
+    printf("load_bpf_program() took %f seconds to execute\n", ((double)t) / CLOCKS_PER_SEC);
 
     if ((sst_fd = open(filename, O_RDONLY | O_DIRECT)) == -1)
         die("open() sst file failed");
@@ -124,7 +132,13 @@ int main(int argc, char **argv) {
     if ((offset = context_setup(sst_fd, key, ctx)) < 0)
         exit(1);
 
+    t = clock();
+
     ret = syscall(SYS_READ_XRP, sst_fd, data_buf, 4096, offset, bpf_fd, scratch_buf);
+
+    t = clock() - t;
+
+    printf("read_xrp() took %f seconds to execute\n", ((double)t) / CLOCKS_PER_SEC);
 
     fprintf(stderr, "read_xrp() return: %ld\n", ret);
     fprintf(stderr, "%s\n", strerror(errno));
