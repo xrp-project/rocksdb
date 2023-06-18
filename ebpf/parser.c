@@ -329,9 +329,35 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
     return found;
 }
 
-__noinline int index_block_loop(struct bpf_xrp *context, uint64_t index_offset) {
+__inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t index_offset) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     struct block_handle tmp_data_handle;
+    uint32_t bytes_read;
+
+    if (sizes->shared_size == 0) {
+        if ((bytes_read = read_block_handle(context, &tmp_data_handle, index_offset)) == 0)
+            return 0;
+    } else {
+        int64_t delta_size;
+
+        if ((bytes_read = decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN)) == 0)
+            return 0;
+
+        delta_size = rocksdb_ctx->varint_context.varsigned64;
+
+        // struct IndexValue::EncodeTo
+        tmp_data_handle.offset = rocksdb_ctx->index_context.prev_data_handle.offset + rocksdb_ctx->index_context.prev_data_handle.size + kBlockTrailerSize;
+        tmp_data_handle.size = rocksdb_ctx->index_context.prev_data_handle.size + delta_size;
+    }
+
+    // Now that it's been read, set the block_handle as the previous block_handle
+    rocksdb_ctx->index_context.prev_data_handle = tmp_data_handle;
+
+    return bytes_read;
+}
+
+__noinline int index_block_loop(struct bpf_xrp *context, uint64_t index_offset) {
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     struct key_size key_size;
     uint32_t bytes_read;
 
@@ -345,31 +371,14 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t index_offset) 
 
     index_offset += key_size.non_shared_size & MAX_KEY_LEN;
 
-    if (key_size.shared_size == 0) {
-        bytes_read = read_block_handle(context, &tmp_data_handle, index_offset);
-        if (bytes_read == 0)
-            return -EBPF_EINVAL;
+    if ((bytes_read = index_read_value(context, &key_size, index_offset)) == 0)
+        return -EBPF_EINVAL;
 
-        index_offset += bytes_read;
-    } else {
-        int64_t delta_size;
+    index_offset += bytes_read;
 
-        bytes_read = decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN);
-        if (bytes_read == 0)
-            return -EBPF_EINVAL;
-
-        index_offset += bytes_read;
-        delta_size = rocksdb_ctx->varint_context.varsigned64;
-
-        // struct IndexValue::EncodeTo
-        tmp_data_handle.offset = rocksdb_ctx->index_context.prev_data_handle.offset + rocksdb_ctx->index_context.prev_data_handle.size + kBlockTrailerSize;
-        tmp_data_handle.size = rocksdb_ctx->index_context.prev_data_handle.size + delta_size;
-    }
-
-    rocksdb_ctx->index_context.prev_data_handle = tmp_data_handle;
     rocksdb_ctx->index_context.index_offset = index_offset;
 
-    // key > data block key, key is not in data block
+    // If user key > current key, then user key is not in the corresponding data block
     if (strncmp_key(context) > 0)
         return 0; // not found
 
