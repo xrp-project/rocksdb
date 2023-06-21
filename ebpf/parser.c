@@ -35,8 +35,8 @@ char LICENSE[] SEC("license") = "GPL";
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
 // Returns pointer to one past end of src
-__noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
-    const unsigned char *data_buffer = context->data;
+__noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offset) {
+    const uint8_t *data_buffer = context->data;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint64_t result = 0;
     uint32_t counter = 0;
@@ -45,7 +45,7 @@ __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offs
         return 0;
 
     for (uint8_t shift = 0; shift <= 63; shift += VARINT_SHIFT) {
-        unsigned char byte = *(data_buffer + offset + counter);
+        uint8_t byte = *(data_buffer + offset + counter);
         counter++;
 
         if (byte & VARINT_MSB) {
@@ -62,17 +62,16 @@ __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offs
 }
 
 // Returns pointer to one past end of src
-__noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
-    const unsigned char *data_buffer = context->data;
+__noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offset) {
+    const uint8_t *data_buffer = context->data;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    uint32_t result = 0;
-    uint32_t counter = 0;
+    uint32_t result = 0, counter = 0;
 
     if (offset < 0 || offset > EBPF_DATA_BUFFER_SIZE - MAX_VARINT32_LEN)
         return 0;
 
     for (uint8_t shift = 0; shift <= 27; shift += VARINT_SHIFT) {
-        unsigned char byte = *(data_buffer + offset + counter);
+        uint8_t byte = *(data_buffer + offset + counter);
         counter++;
 
         if (byte & VARINT_MSB) {
@@ -92,11 +91,11 @@ __inline int64_t zigzagToI64(uint64_t n) {
     return (n >> 1) ^ -(uint64_t)(n & 1);
 }
 
-__noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset, uint8_t limit) {
+__noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t ret;
 
-    ret = decode_varint64(context, offset, limit);
+    ret = decode_varint64(context, offset);
     rocksdb_ctx->varint_context.varsigned64 = zigzagToI64(rocksdb_ctx->varint_context.varint64);
     return ret;
 }
@@ -105,8 +104,8 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
 __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t n = MAX_KEY_LEN;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    char *user_key = rocksdb_ctx->key;
-    char *block_key = rocksdb_ctx->temp_key;
+    uint8_t *user_key = rocksdb_ctx->key;
+    uint8_t *block_key = rocksdb_ctx->temp_key;
 
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen
@@ -120,21 +119,21 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     if (n == 0)
         return 0;
 
-    return *(unsigned char *)user_key - *(unsigned char *)block_key;
+    return *user_key - *block_key;
 }
 
 __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
     uint32_t varint_delta, varint_return;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
-    varint_return = decode_varint64(context, offset, MAX_VARINT64_LEN);
+    varint_return = decode_varint64(context, offset);
     if (varint_return == 0)
         return 0;
 
     varint_delta = varint_return;
     bh->offset = rocksdb_ctx->varint_context.varint64;
 
-    varint_return = decode_varint64(context, offset + varint_delta, MAX_VARINT64_LEN);
+    varint_return = decode_varint64(context, offset + varint_delta);
     if (varint_return == 0)
         return 0;
 
@@ -149,13 +148,13 @@ __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes
     uint64_t offset = base_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
-    if ((varint_return = decode_varint32(context, offset, MAX_VARINT32_LEN)) == 0)
+    if ((varint_return = decode_varint32(context, offset)) == 0)
         return 0;
 
     offset += varint_return;
     sizes->shared_size = rocksdb_ctx->varint_context.varint32;
 
-    if ((varint_return = decode_varint32(context, offset, MAX_VARINT32_LEN)) == 0)
+    if ((varint_return = decode_varint32(context, offset)) == 0)
         return 0;
 
     offset += varint_return;
@@ -241,7 +240,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += bytes_read;
 
     // Read value length
-    if ((bytes_read = decode_varint32(context, data_offset, MAX_VARINT32_LEN)) == 0)
+    if ((bytes_read = decode_varint32(context, data_offset)) == 0)
         return -EBPF_EINVAL;
 
     data_offset += bytes_read;
@@ -340,7 +339,7 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
     } else {
         int64_t delta_size;
 
-        if ((bytes_read = decode_varsignedint64(context, index_offset, MAX_VARINT64_LEN)) == 0)
+        if ((bytes_read = decode_varsignedint64(context, index_offset)) == 0)
             return 0;
 
         delta_size = rocksdb_ctx->varint_context.varsigned64;
@@ -561,7 +560,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     curr_idx = rocksdb_ctx->file_array.curr_idx;
     rocksdb_ctx->handle.offset = rocksdb_ctx->file_array.array[curr_idx].offset;
     rocksdb_ctx->handle.size = rocksdb_ctx->file_array.array[curr_idx].bytes_to_read;
-    rocksdb_ctx->offset_in_block = rocksdb_ctx->file_array.array[curr_idx].offset_in_block; // or rocksdb_ctx->handle.offset - context->next_addr[0];
+    rocksdb_ctx->offset_in_block = rocksdb_ctx->file_array.array[curr_idx].offset_in_block;
     rocksdb_ctx->stage = rocksdb_ctx->file_array.array[curr_idx].stage;
 
     // 2. Set the resubmission settings
