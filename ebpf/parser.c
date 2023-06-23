@@ -338,7 +338,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
         return -EBPF_EINVAL;
 
     for (int i = 0; i < (value_length & MAX_VALUE_LEN); i++)
-        rocksdb_ctx->data_context.value[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
+        rocksdb_ctx->data_context.value[i] = data_block[(data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)];
 
     rocksdb_ctx->data_context.value[value_length & MAX_VALUE_LEN] = '\0';
 
@@ -396,11 +396,11 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
 
 __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t index_offset) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    struct block_handle tmp_data_handle;
+    struct block_handle *prev_data_handle = &rocksdb_ctx->index_context.prev_data_handle;
     uint32_t bytes_read;
 
     if (sizes->shared_size == 0) {
-        if ((bytes_read = read_block_handle(context, &tmp_data_handle, index_offset)) == 0)
+        if ((bytes_read = read_block_handle(context, prev_data_handle, index_offset)) == 0)
             return 0;
     } else {
         int64_t delta_size;
@@ -410,13 +410,10 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
 
         delta_size = rocksdb_ctx->varint_context.varsigned64;
 
-        // struct IndexValue::EncodeTo
-        tmp_data_handle.offset = rocksdb_ctx->index_context.prev_data_handle.offset + rocksdb_ctx->index_context.prev_data_handle.size + kBlockTrailerSize;
-        tmp_data_handle.size = rocksdb_ctx->index_context.prev_data_handle.size + delta_size;
+        // Taken from struct IndexValue::EncodeTo
+        prev_data_handle->offset = prev_data_handle->offset + prev_data_handle->size + kBlockTrailerSize;
+        prev_data_handle->size = prev_data_handle->size + delta_size;
     }
-
-    // Now that it's been read, set the block_handle as the previous block_handle
-    rocksdb_ctx->index_context.prev_data_handle = tmp_data_handle;
 
     return bytes_read;
 }
