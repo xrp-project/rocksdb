@@ -247,14 +247,23 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
  *
  * Returns 0 on success, or -1 on failure.
  */
-__inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint32_t *block_footer) {
+__inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint8_t* index_type, uint32_t* num_restarts) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    uint32_t block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
+    uint32_t block_end_offset, block_footer;
+
+    block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
 
     if (block_end_offset > EBPF_DATA_BUFFER_SIZE - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -1;
 
-    *block_footer = *(uint32_t *)(context->data + block_end_offset);
+    block_footer = *(uint32_t *)(context->data + block_end_offset);
+
+    /*
+     * The block footer contains 4 bytes right before the restart ranges
+     * containing the index type and the number of restart entries packed
+     * together.
+     */
+    unpack_index_type_and_num_restarts(block_footer, index_type, num_restarts);
 
     return 0;
 }
@@ -347,7 +356,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
 
 __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_block_offset) {
     uint8_t *data_block, index_type;
-    uint32_t num_restarts, data_end, block_footer, data_offset = data_block_offset;
+    uint32_t num_restarts, data_end, data_offset = data_block_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     int loop_ret, loop_counter = 0, found = 0;
     const int LOOP_COUNTER_THRESH = 2000;
@@ -360,10 +369,8 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t data_blo
     if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + BLOCK_FOOTER_FIXED_LEN || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
 
-    if (read_block_footer(context, data_block_offset, &block_footer) < 0)
+    if (read_block_footer(context, data_block_offset, &index_type, &num_restarts) < 0)
         return -EBPF_EINVAL;
-
-    unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
 
     data_end = block_data_end(data_block_offset, rocksdb_ctx->handle.size, num_restarts);
 
@@ -477,7 +484,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     uint8_t index_type;
     int loop_ret, found = 0, i;
     const int LOOP_COUNTER_THRESH = 2000;
-    uint32_t num_restarts, block_footer;
+    uint32_t num_restarts;
     uint64_t index_end, index_offset = index_block_offset;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
@@ -490,11 +497,10 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t index_b
     if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
         return -EBPF_EINVAL;
 
-    if (read_block_footer(context, index_block_offset, &block_footer) < 0)
+    if (read_block_footer(context, index_block_offset, &index_type, &num_restarts) < 0)
         return -EBPF_EINVAL;
 
     // TODO: check index type
-    unpack_index_type_and_num_restarts(block_footer, &index_type, &num_restarts);
 
     index_end = block_data_end(index_block_offset, rocksdb_ctx->handle.size, num_restarts);
 
