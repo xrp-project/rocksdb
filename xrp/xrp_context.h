@@ -64,13 +64,11 @@ struct file_array {
 };
 
 struct index_parse_context {
-    unsigned char prev_index_key[MAX_KEY_LEN + 1];
     struct block_handle prev_data_handle;
     uint32_t index_offset;
 };
 
 struct data_parse_context {
-    unsigned char prev_data_key[MAX_KEY_LEN + 1];
     unsigned char value[MAX_VALUE_LEN + 1];
     uint32_t data_offset;
     enum value_type vt;

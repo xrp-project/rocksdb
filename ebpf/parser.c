@@ -34,7 +34,13 @@ char LICENSE[] SEC("license") = "GPL";
 #define VARINT_SHIFT ((unsigned int) 7)
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
-// Returns pointer to one past end of src
+/*
+ * Decodes a variable length 64-bit unsigned integer (varint64), reading
+ * from context->data + offset.
+ * Returns number of bytes read, or 0 on error.
+ * 
+ * Encoding: https://protobuf.dev/programming-guides/encoding/#varints
+ */
 __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offset) {
     const uint8_t *data_buffer = context->data;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -61,7 +67,13 @@ __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offs
     return 0;
 }
 
-// Returns pointer to one past end of src
+/*
+ * Decodes a variable length 32-bit unsigned integer (varint64), reading
+ * from context->data + offset.
+ * Returns number of bytes read, or 0 on error.
+ * 
+ * Encoding: https://protobuf.dev/programming-guides/encoding/#varints
+ */
 __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offset) {
     const uint8_t *data_buffer = context->data;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -87,10 +99,18 @@ __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offs
     return 0;
 }
 
+// https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
 __inline int64_t zigzagToI64(uint64_t n) {
     return (n >> 1) ^ -(uint64_t)(n & 1);
 }
 
+/*
+ * Decodes a variable length 64-bit signed integer (varsignedint64), reading
+ * from context->data + offset.
+ * Returns number of bytes read, or 0 on error.
+ * 
+ * Encoding: https://protobuf.dev/programming-guides/encoding/#signed-ints
+ */
 __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t ret;
@@ -100,7 +120,9 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
     return ret;
 }
 
-// TODO: fix error return for this
+/* 
+ * Equivalent to strncmp(rocksdb_ctx->key, rocksdb_ctx->temp_key, MAX_KEY_LEN)
+ */
 __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t n = MAX_KEY_LEN;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -108,7 +130,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t *block_key = rocksdb_ctx->temp_key;
 
     if (n > MAX_KEY_LEN + 1)
-        return -1; // should never happen
+        return -1; // should never happen since n = MAX_KEY_LEN
 
     while (n && *user_key && (*user_key == *block_key)) {
         ++user_key;
@@ -122,6 +144,13 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
     return *user_key - *block_key;
 }
 
+/*
+ * Reads a block handle from context->data + offset into bh.
+ * Returns number of bytes read, or 0 on error.
+ * 
+ * A block handle is composed of the following:
+ *      offset (varint64), size (varint64)
+ */
 __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
     uint32_t varint_delta, varint_return;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -143,31 +172,41 @@ __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle
     return varint_delta;
 }
 
-__inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes, uint64_t base_offset) {
-    uint32_t varint_return;
-    uint64_t offset = base_offset;
+/*
+ * Reads a key's sizes from context->data + offset into sizes.
+ * Returns number of bytes read, or 0 on error.
+ * 
+ * A key's size is composed of the following:
+ *      shared_size (varint32), non_shared_size (varint32)
+ * 
+ * The total length of the key is shared_size + non_shared_size, with
+ * shared_size bytes taken from the previous key, and non_shared_size bytes
+ * taken from the bytes immediately following non_shared_size in the buffer.
+ */
+__inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
+    uint32_t varint_return, varint_delta;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
     if ((varint_return = decode_varint32(context, offset)) == 0)
         return 0;
 
-    offset += varint_return;
+    varint_delta = varint_return;
     sizes->shared_size = rocksdb_ctx->varint_context.varint32;
 
-    if ((varint_return = decode_varint32(context, offset)) == 0)
+    if ((varint_return = decode_varint32(context, offset + varint_delta)) == 0)
         return 0;
 
-    offset += varint_return;
+    varint_delta += varint_return;
     sizes->non_shared_size = rocksdb_ctx->varint_context.varint32;
 
-    return offset - base_offset;
+    return varint_delta;
 }
 
-__noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_t index_offset) {
+__noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     /* TODO investigate why passing in a pointer with func-by-func verification works */
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
-    uint8_t *index_key = rocksdb_ctx->temp_key;
-    uint8_t *index_block = context->data;
+    uint8_t *key = rocksdb_ctx->temp_key;
+    uint8_t *block = context->data;
 
     if (sizes == NULL)
         return -EBPF_EINVAL;
@@ -175,24 +214,22 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
     if (KEY_SIZE(sizes) > MAX_KEY_LEN)
         return -EBPF_EINVAL;
 
-    if (index_offset > EBPF_DATA_BUFFER_SIZE - MAX_KEY_LEN)
+    if (offset > EBPF_DATA_BUFFER_SIZE - sizes->non_shared_size)
         return -EBPF_EINVAL;
 
-    // Copy the shared component of the key from the previous key
-    if (sizes->shared_size > 0)
-        for (int i = 0; i < (sizes->shared_size & MAX_KEY_LEN); i++)
-            index_key[i] = rocksdb_ctx->index_context.prev_index_key[i];
-
-    // Read the non-shared component of the key from the data buffer
+    /*
+     * Copy the non-shared component of the key from the data buffer starting at
+     * key + shared_size.
+     * 
+     * If there is no shared component, shared_size will be 0 and this will copy
+     * the entire key. Otherwise, the shared component will be stored in the key
+     * from the previous iteration.
+     */
     for (int i = 0; i < (sizes->non_shared_size & MAX_KEY_LEN); i++)
-        (index_key + (sizes->shared_size & MAX_KEY_LEN))[i] = *(index_block + index_offset + i);
+        key[(sizes->shared_size + i) & MAX_KEY_LEN] = block[(offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)];
 
     // Null-terminate the key
-    index_key[KEY_SIZE(sizes) & MAX_KEY_LEN] = '\0';
-
-    // Now that it's been read, set the key as the previous key
-    for (int i = 0; i < (KEY_SIZE(sizes) & MAX_KEY_LEN) + 1; i++)
-        rocksdb_ctx->index_context.prev_index_key[i] = index_key[i];
+    key[KEY_SIZE(sizes) & MAX_KEY_LEN] = '\0';
 
     return 0;
 }
@@ -230,8 +267,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     uint32_t bytes_read;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint8_t *data_block = context->data;
-    uint64_t packed_type_seq, seq;
-    enum value_type vt;
+    uint64_t packed_type_seq;
     struct key_size key_size;
 
     if ((bytes_read = read_key_sizes(context, &key_size, data_offset)) == 0)
@@ -246,13 +282,13 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
     data_offset += bytes_read;
     value_length = rocksdb_ctx->varint_context.varint32;
 
-    // Remove internal footer from key
+    // Remove internal footer from key size
     key_size.non_shared_size -= kNumInternalBytes;
 
     if (read_key(context, &key_size, data_offset) < 0)
         return -EBPF_EINVAL;
 
-    data_offset += key_size.non_shared_size & MAX_KEY_LEN;
+    data_offset += key_size.non_shared_size;
 
     if (strncmp_key(context) != 0) { // key not equal, continue
         data_offset += kNumInternalBytes + value_length;
@@ -260,21 +296,25 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t data_offset) {
         return 0;
     }
 
-    if (data_offset > EBPF_DATA_BUFFER_SIZE - sizeof(uint64_t))
+    if (data_offset > EBPF_DATA_BUFFER_SIZE - kNumInternalBytes)
         return -EBPF_EINVAL;
 
     packed_type_seq = *(uint64_t *)(data_block + ((data_offset & (EBPF_DATA_BUFFER_SIZE - 1))));
-    unpack_sequence_and_type(packed_type_seq, &seq, &vt);
-
-    rocksdb_ctx->data_context.vt = vt;
-    rocksdb_ctx->data_context.seq = seq;
+    unpack_sequence_and_type(packed_type_seq, &rocksdb_ctx->data_context.seq, &rocksdb_ctx->data_context.vt);
 
     data_offset += kNumInternalBytes;
+
+    /* 
+     * Reading the value was left in this function because the verifier
+     * complained otherwise.
+     */
+    if (data_offset > EBPF_DATA_BUFFER_SIZE - value_length || value_length > MAX_VALUE_LEN)
+        return -EBPF_EINVAL;
 
     for (int i = 0; i < (value_length & MAX_VALUE_LEN); i++)
         rocksdb_ctx->data_context.value[i] = *(data_block + ((data_offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)));
 
-    rocksdb_ctx->data_context.value[(value_length & MAX_VALUE_LEN)] = '\0';
+    rocksdb_ctx->data_context.value[value_length & MAX_VALUE_LEN] = '\0';
 
     return 1;
 }
