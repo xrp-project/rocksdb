@@ -51,10 +51,10 @@ union varint_context {
 
 struct file_context {
     uint32_t fd;
+    enum parse_stage stage;
     uint64_t offset_in_block;
     uint64_t offset;
     uint64_t bytes_to_read;
-    enum parse_stage stage;
 };
 
 struct file_array {

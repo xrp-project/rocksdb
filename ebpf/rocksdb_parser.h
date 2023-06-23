@@ -137,9 +137,9 @@ struct block_handle {
  */
 struct footer {
     uint8_t checksum;
+    uint32_t version;
     struct block_handle metaindex_handle;
     struct block_handle index_handle;
-    uint32_t version;
     uint64_t magic_number;
 };
 
@@ -188,10 +188,10 @@ struct data_parse_context {
 // - The offset and bytes_to_read fields indicate what the next read should be.
 struct file_context {
     uint32_t fd;
+    enum parse_stage stage;
     uint64_t offset_in_block;
     uint64_t offset;
     uint64_t bytes_to_read;
-    enum parse_stage stage;
 };
 
 struct file_array {
