@@ -202,6 +202,13 @@ __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes
     return varint_delta;
 }
 
+/*
+ * Reads a key sizes from context->data + offset into rocksdb_ctx->temp_key.
+ * Returns 0 on success, or -1 on failure.
+ * 
+ * Reads non_shared_size bytes from the data buffer. rocksdb_ctx->temp_key
+ * should contain the shared bytes (if they exist).
+ */
 __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     /* TODO investigate why passing in a pointer with func-by-func verification works */
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
@@ -209,13 +216,13 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
     uint8_t *block = context->data;
 
     if (sizes == NULL)
-        return -EBPF_EINVAL;
+        return -1;
 
     if (KEY_SIZE(sizes) > MAX_KEY_LEN)
-        return -EBPF_EINVAL;
+        return -1;
 
     if (offset > EBPF_DATA_BUFFER_SIZE - sizes->non_shared_size)
-        return -EBPF_EINVAL;
+        return -1;
 
     /*
      * Copy the non-shared component of the key from the data buffer starting at
@@ -234,6 +241,12 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
     return 0;
 }
 
+/*
+ * Reads a block footer from context->data + offset into block_footer.
+ * Calculates the end of the block from rocksdb_ctx->handle.
+ *
+ * Returns 0 on success, or -1 on failure.
+ */
 __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint32_t *block_footer) {
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint32_t block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
@@ -246,15 +259,28 @@ __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, u
     return 0;
 }
 
+/*
+ * Set up the BPF context struct for the next call.
+ */
 __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, enum parse_stage stage) {
     uint64_t block_size;
     struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
     rocksdb_ctx->handle = *bh;
 
+    /*
+     * XRP can only read from addresses that are aligned to EBPF_BLOCK_SIZE.
+     * Set the address to the the block containing the desired offset, and
+     * store the number of bytes between the block start and the offset.
+     */
     context->next_addr[0] = ROUND_DOWN(bh->offset, EBPF_BLOCK_SIZE);
     rocksdb_ctx->offset_in_block = bh->offset - context->next_addr[0];
 
+    /*
+     * XRP can only read sizes that are multiples of a disk block.
+     * Also account for the bytes between the start of the block and the offset,
+     * and the block trailer (which isn't accounted for in the block handle).
+     */
     block_size = rocksdb_ctx->offset_in_block + bh->size + kBlockTrailerSize;
     context->size[0] = ROUND_UP(block_size, PAGE_SIZE);
 
