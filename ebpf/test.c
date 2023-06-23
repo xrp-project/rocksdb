@@ -84,7 +84,7 @@ static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context
     block_offset = ROUND_DOWN(footer_offset, EBPF_BLOCK_SIZE);
 
     // Set up XRP context struct
-    ctx->offset_in_block = footer_offset - block_offset;
+    ctx->block_offset = footer_offset - block_offset;
     ctx->stage = kFooterStage;
     strncpy((char *)&ctx->key, key, strlen(key) + 1);
 

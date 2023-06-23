@@ -279,18 +279,18 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
 
     /*
      * XRP can only read from addresses that are aligned to EBPF_BLOCK_SIZE.
-     * Set the address to the the block containing the desired offset, and
-     * store the number of bytes between the block start and the offset.
+     * Set the address to the disk block containing the desired offset, and
+     * store the number of bytes between the disk block start and the offset.
      */
     context->next_addr[0] = ROUND_DOWN(bh->offset, EBPF_BLOCK_SIZE);
-    rocksdb_ctx->offset_in_block = bh->offset - context->next_addr[0];
+    rocksdb_ctx->block_offset = bh->offset - context->next_addr[0];
 
     /*
      * XRP can only read sizes that are multiples of a disk block.
      * Also account for the bytes between the start of the block and the offset,
      * and the block trailer (which isn't accounted for in the block handle).
      */
-    block_size = rocksdb_ctx->offset_in_block + bh->size + kBlockTrailerSize;
+    block_size = rocksdb_ctx->block_offset + bh->size + kBlockTrailerSize;
     context->size[0] = ROUND_UP(block_size, EBPF_BLOCK_SIZE);
 
     rocksdb_ctx->stage = stage;
@@ -632,11 +632,11 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     curr_idx = rocksdb_ctx->file_array.curr_idx;
     rocksdb_ctx->handle.offset = rocksdb_ctx->file_array.array[curr_idx].offset;
     rocksdb_ctx->handle.size = rocksdb_ctx->file_array.array[curr_idx].bytes_to_read;
-    rocksdb_ctx->offset_in_block = rocksdb_ctx->file_array.array[curr_idx].offset_in_block;
+    rocksdb_ctx->block_offset = rocksdb_ctx->file_array.array[curr_idx].block_offset;
     rocksdb_ctx->stage = rocksdb_ctx->file_array.array[curr_idx].stage;
 
     // 2. Set the resubmission settings
-    data_size = rocksdb_ctx->offset_in_block + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
 
     memset(&rocksdb_ctx->data_context, 0, sizeof(rocksdb_ctx->data_context));
     memset(&rocksdb_ctx->varint_context, 0, sizeof(rocksdb_ctx->varint_context));
@@ -659,9 +659,9 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
-        return parse_footer(context, rocksdb_ctx->offset_in_block);
+        return parse_footer(context, rocksdb_ctx->block_offset);
     } else if (stage == kIndexStage) {
-        ret = parse_index_block(context, rocksdb_ctx->offset_in_block);
+        ret = parse_index_block(context, rocksdb_ctx->block_offset);
 
         if (ret == 1) // found
             return 0;
@@ -671,7 +671,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         return 0;
     } else if (stage == kDataStage) {
         bpf_printk("Data stage\n");
-        ret = parse_data_block(context, rocksdb_ctx->offset_in_block);
+        ret = parse_data_block(context, rocksdb_ctx->block_offset);
         rocksdb_ctx->found = ret == 1;
 
         if (ret == 1)
