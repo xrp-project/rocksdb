@@ -88,6 +88,15 @@ static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context
     ctx->stage = kFooterStage;
     strncpy((char *)&ctx->key, key, strlen(key) + 1);
 
+    ctx->file_array.count = 1;
+    ctx->file_array.curr_idx = 0;
+
+    ctx->file_array.array[0].block_offset = block_offset;
+    ctx->file_array.array[0].fd = sst_fd;
+    ctx->file_array.array[0].stage = kFooterStage;
+    ctx->file_array.array[0].offset = footer_offset;
+    ctx->file_array.array[0].bytes_to_read = MAX_FOOTER_LEN;
+
     return block_offset;
 }
 
