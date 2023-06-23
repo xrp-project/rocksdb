@@ -282,7 +282,7 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
      * and the block trailer (which isn't accounted for in the block handle).
      */
     block_size = rocksdb_ctx->offset_in_block + bh->size + kBlockTrailerSize;
-    context->size[0] = ROUND_UP(block_size, PAGE_SIZE);
+    context->size[0] = ROUND_UP(block_size, EBPF_BLOCK_SIZE);
 
     rocksdb_ctx->stage = stage;
     context->done = false;
