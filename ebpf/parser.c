@@ -462,7 +462,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     offset += bytes_read;
 
-    rocksdb_ctx->index_ctx.index_offset = offset;
+    rocksdb_ctx->index_ctx.offset = offset;
 
     // If user key > current key, then user key is not in the corresponding data block
     if (strncmp_key(context) > 0)
@@ -479,7 +479,7 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
 
     while (offset < index_end && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = index_block_loop(context, offset);
-        offset = rocksdb_ctx->index_ctx.index_offset;
+        offset = rocksdb_ctx->index_ctx.offset;
 
         loop_counter++;
 
@@ -529,7 +529,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
         if (found)
             break;
 
-        index_offset = rocksdb_ctx->index_ctx.index_offset;
+        index_offset = rocksdb_ctx->index_ctx.offset;
     }
 
     if (i >= LOOP_COUNTER_THRESH)

@@ -170,7 +170,7 @@ union varint_ctx {
 
 struct index_ctx {
     struct block_handle prev_bh;
-    uint32_t index_offset;
+    uint32_t offset;
 };
 
 struct data_ctx {
