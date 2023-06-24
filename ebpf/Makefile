@@ -9,6 +9,8 @@ LDFLAGS = -L/usr/lib64
 
 .PHONY: all clean
 
+all: test parser.o
+
 test: rocksdb_parser.h ebpf.h
 
 parser.o: parser.c rocksdb_parser.h data_block_footer.h ebpf.h
@@ -24,22 +26,6 @@ parser.o: parser.c rocksdb_parser.h data_block_footer.h ebpf.h
 		-Werror \
 		-O2 -emit-llvm -c -g -o ${@:.o=.ll} $<
 	$(LLC) -march=bpf -filetype=obj -o $@ ${@:.o=.ll}
-
-read.o: read.c ebpf.h
-	$(CLANG) -S -g\
-		-target bpf \
-		-D __BPF_TRACING__ \
-		-DROCKSDB_EBPF \
-		$(BPF_CFLAGS) \
-		-Wall \
-		-Wno-unused-value \
-		-Wno-pointer-sign \
-		-Wno-compare-distinct-pointer-types \
-		-Werror \
-		-O2 -emit-llvm -c -g -o ${@:.o=.ll} $<
-	$(LLC) -march=bpf -filetype=obj -o $@ ${@:.o=.ll}
-
-all: test parser.o
 
 clean:
 	rm -f -- *.o *.ll test
