@@ -149,7 +149,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
  * Returns number of bytes read, or 0 on error.
  * 
  * A block handle is composed of the following:
- *      offset (varint64), size (varint64)
+ *     offset (varint64), size (varint64)
  */
 __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
     uint32_t varint_delta, varint_return;
@@ -177,7 +177,7 @@ __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle
  * Returns number of bytes read, or 0 on error.
  * 
  * A key's size is composed of the following:
- *      shared_size (varint32), non_shared_size (varint32)
+ *     shared_size (varint32), non_shared_size (varint32)
  * 
  * The total length of the key is shared_size + non_shared_size, with
  * shared_size bytes taken from the previous key, and non_shared_size bytes
@@ -298,15 +298,26 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
 }
 
 /*
- * Reads a single key-value pair from context->data + offset
+ * Reads a single key-value pair from context->data + offset.
+ * 
+ * The key has the following format:
+ *     shared_size (varint32), non_shared_size (varint32), value_length (varint32)
+ *     key (non_shared_size bytes)
+ *     value_type and seq_no (8 bytes, packed)
+ *     value (value_length bytes)
+ * 
+ * Returns 1 if the key is found, 0 if not, and a negative value on error.
+ * Stores the next offset in rocksdb_ctx->data_context.data_offset. If the value
+ * is found, it's stored in rocksdb_ctx->data_context.value, along with the
+ * sequence number and value type.
  */
 __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
-    volatile uint32_t value_length;
-    uint32_t bytes_read;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
     uint8_t *data_block = context->data;
+    uint32_t bytes_read;
+    volatile uint32_t value_length;
     uint64_t packed_type_seq;
     struct key_size key_size;
+    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
 
     if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0)
         return -EBPF_EINVAL;
@@ -328,12 +339,17 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
 
     offset += key_size.non_shared_size;
 
-    if (strncmp_key(context) != 0) { // key not equal, continue
+    /*
+     * Key not equal - increment past internal footer and value and move to next
+     * iteration.
+     */ 
+    if (strncmp_key(context) != 0) {
         offset += kNumInternalBytes + value_length;
         rocksdb_ctx->data_context.data_offset = offset;
         return 0;
     }
 
+    // Read the sequence number and value type from the internal key footer
     if (offset > EBPF_DATA_BUFFER_SIZE - kNumInternalBytes)
         return -EBPF_EINVAL;
 
@@ -343,8 +359,8 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
     offset += kNumInternalBytes;
 
     /* 
-     * Reading the value was left in this function because the verifier
-     * complained otherwise.
+     * Offloading reading the value to a separate function led to a verifier
+     * failure, so it was kept here.
      */
     if (offset > EBPF_DATA_BUFFER_SIZE - value_length || value_length > MAX_VALUE_LEN)
         return -EBPF_EINVAL;
