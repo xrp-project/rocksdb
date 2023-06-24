@@ -420,7 +420,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_of
 
 __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    struct block_handle *prev_bh = &rocksdb_ctx->index_ctx.prev_data_handle;
+    struct block_handle *prev_bh = &rocksdb_ctx->index_ctx.prev_bh;
     uint32_t bytes_read;
 
     if (sizes->shared_size == 0) {
@@ -538,7 +538,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
     if (index_offset >= index_end)
         return 0; // not found
 
-    prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_data_handle, kDataStage);
+    prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_bh, kDataStage);
 
     return found;
 }
