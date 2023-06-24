@@ -1,37 +1,13 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 
-#include "data_block_footer.h"
-#include "rocksdb_parser.h"
-#include "ebpf.h"
+#include "ebpf_internal.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
 #define __inline inline __attribute__((always_inline))
 #define __noinline __attribute__((noinline))
 #define __nooptimize __attribute__((optnone))
-
-#define memcpy(dest, src, n) __builtin_memcpy((dest), (src), (n))
-#define memset(dest, value, n) __builtin_memset((dest), (value), (n))
-#define memcmp(s1, s2, n) __builtin_memcmp((s1), (s2), (n))
-
-/*
- * Type definitions for eBPF
- */
-#define uint64_t __u64
-#define uint32_t __u32
-#define uint8_t __u8
-#define int64_t __s64
-#define int32_t __s32
-#define int8_t __s8
-#define bool short
-#define NULL (void *)0
-#define true 1
-#define false 0
-
-// Varint code
-#define VARINT_SHIFT ((unsigned int) 7)
-#define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
 
 /*
  * Decodes a variable length 64-bit unsigned integer (varint64), reading

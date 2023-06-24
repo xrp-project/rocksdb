@@ -7,9 +7,8 @@
 #include <stdexcept>
 #include <string>
 
-#include <unistd.h>
-#include <bpf/libbpf.h>
 #include <bpf/bpf.h>
+#include <bpf/libbpf.h>
 #include <linux/bpf.h>
 #include <linux/mman.h>
 

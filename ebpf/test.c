@@ -14,7 +14,6 @@
 #include <linux/bpf.h>
 #include <linux/mman.h>
 
-#include "ebpf.h"
 #include "rocksdb_parser.h"
 
 const size_t huge_page_size = 1UL << 21UL;
