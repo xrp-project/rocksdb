@@ -170,13 +170,13 @@ union varint_ctx {
 
 struct index_ctx {
     struct block_handle prev_bh;
-    uint32_t offset;
+    uint64_t offset;
 };
 
 struct data_ctx {
     unsigned char value[MAX_VALUE_LEN + 1];
-    uint32_t offset;
     enum value_type vt;
+    uint64_t offset;
     uint64_t seq;
 };
 

@@ -245,9 +245,10 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
  *
  * Returns 0 on success, or -1 on failure.
  */
-__inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint8_t* index_type, uint32_t* num_restarts) {
+__inline int read_block_footer(struct bpf_xrp *context, const uint64_t offset, uint8_t* index_type, uint32_t* num_restarts) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    uint32_t block_end_offset, block_footer;
+    uint32_t block_footer;
+    uint64_t block_end_offset;
 
     block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
 
@@ -310,7 +311,7 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
  * is found, it's stored in rocksdb_ctx->data_ctx.value, along with the
  * sequence number and value type.
  */
-__noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
+__noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
     uint8_t *data_block = context->data;
     uint32_t bytes_read;
     volatile uint32_t value_length;
@@ -379,11 +380,12 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
  * 
  * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
  */
-__noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_offset) {
+__noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_offset) {
     uint8_t index_type;
     int loop_ret, loop_count = 0;
     const int LOOP_MAX = 2000;
-    uint32_t num_restarts, data_end, offset = block_offset;
+    uint32_t num_restarts;
+    uint64_t data_end, offset = block_offset;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     if (block_offset > EBPF_BLOCK_SIZE)
@@ -556,7 +558,7 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
  * 
  * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
  */
-__noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_offset) {
+__noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_offset) {
     uint8_t index_type;
     int loop_ret, loop_count = 0;
     const int LOOP_MAX = 2000;
