@@ -75,7 +75,7 @@ static inline int valid_format_version(uint32_t version) {
     return version <= kLatestFormatVersion;
 }
 
-static inline int bh_offset(uint32_t version) {
+static inline int footer_bh_offset(uint32_t version) {
     return version == kLegacyFormatVersion ? LEGACY_BLOCK_HANDLE_OFFSET : BLOCK_HANDLE_OFFSET;
 }
 

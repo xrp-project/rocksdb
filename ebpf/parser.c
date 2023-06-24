@@ -124,10 +124,8 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
  * Equivalent to strncmp(rocksdb_ctx->key, rocksdb_ctx->temp_key, MAX_KEY_LEN)
  */
 __noinline int strncmp_key(struct bpf_xrp *context) {
-    uint8_t n = MAX_KEY_LEN;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    uint8_t *user_key = rocksdb_ctx->key;
-    uint8_t *block_key = rocksdb_ctx->temp_key;
+    uint8_t *user_key = rocksdb_ctx->key, *block_key = rocksdb_ctx->temp_key, n = MAX_KEY_LEN;
 
     if (n > MAX_KEY_LEN + 1)
         return -1; // should never happen since n = MAX_KEY_LEN
@@ -203,7 +201,7 @@ __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes
 }
 
 /*
- * Reads a key sizes from context->data + offset into rocksdb_ctx->temp_key.
+ * Reads key sizes from context->data + offset into rocksdb_ctx->temp_key.
  * Returns 0 on success, or -1 on failure.
  * 
  * Reads non_shared_size bytes from the data buffer. rocksdb_ctx->temp_key
@@ -270,6 +268,7 @@ __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, u
 
 /*
  * Set up the eBPF context struct for the next call.
+ * bh points to the desired block handle to read from in the next call.
  */
 __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, enum parse_stage stage) {
     uint64_t block_size;
@@ -307,7 +306,7 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
  *     value (value_length bytes)
  * 
  * Returns 1 if the key is found, 0 if not, and a negative value on error.
- * Stores the next offset in rocksdb_ctx->data_ctx.data_offset. If the value
+ * Stores the next offset in rocksdb_ctx->data_ctx.offset. If the value
  * is found, it's stored in rocksdb_ctx->data_ctx.value, along with the
  * sequence number and value type.
  */
@@ -344,6 +343,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
      * iteration.
      */ 
     if (strncmp_key(context) != 0) {
+        // TODO if block_key > user_key, user_key is not present. Exit early.
         offset += kNumInternalBytes + value_length;
         rocksdb_ctx->data_ctx.offset = offset;
         return 0;
@@ -373,51 +373,77 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
     return 1;
 }
 
+/*
+ * Iterates over all key-value pairs in a data block. Starts reading from
+ * context->data + block_offset.
+ * 
+ * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
+ */
 __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_offset) {
     uint8_t index_type;
-    uint32_t num_restarts, data_end, data_offset = block_offset;
+    int loop_ret, loop_count = 0;
+    const int LOOP_MAX = 2000;
+    uint32_t num_restarts, data_end, offset = block_offset;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    int loop_ret, loop_counter = 0, found = 0;
-    const int LOOP_COUNTER_THRESH = 2000;
 
     if (block_offset > EBPF_BLOCK_SIZE)
         return -EBPF_EINVAL;
 
+    // Ensure handle.size isn't greater than the data block size
     if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + BLOCK_FOOTER_FIXED_LEN)
         return -EBPF_EINVAL;
 
     if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0)
         return -EBPF_EINVAL;
 
+    // TODO check index type
+
     data_end = block_data_end(block_offset, rocksdb_ctx->handle.size, num_restarts);
 
-    while (data_offset < data_end && data_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
-        loop_ret = data_block_loop(context, data_offset);
-        data_offset = rocksdb_ctx->data_ctx.offset;
-
-        loop_counter++;
+    /*
+     * Offload each iteration of the loop to data_block_loop(). This allows us
+     * to implement complex logic without running afoul of the verifier's jump
+     * limit through function-by-function verification.
+     * 
+     * In order to satisfy the verifier, we artifically cap the loop at LOOP_MAX
+     * iterations, which should be enough to read the whole data block. LOOP_MAX
+     * was determined based on the eBPF verifier's jump verifier and how many
+     * jumps there are in each iteration of the while loop.
+     */
+    while (offset < data_end && loop_count < LOOP_MAX) {
+        loop_ret = data_block_loop(context, offset);
+        offset = rocksdb_ctx->data_ctx.offset;
+        loop_count++;
 
         if (loop_ret < 0)
             return loop_ret;
         else if (loop_ret == 0)
             continue;
-        else if (loop_ret == 1) {
-            found = 1;
+        else if (loop_ret == 1)
             break;
-        }
     }
 
-    if (loop_counter >= LOOP_COUNTER_THRESH)
+    if (loop_count >= LOOP_MAX)
         return -EBPF_EINVAL;
 
-    if (data_offset >= data_end || data_offset >= EBPF_DATA_BUFFER_SIZE) {
-        bpf_printk("data offset >= data_end\n");
+    if (offset >= data_end)
         return 0; // not found
-    }
 
-    return found;
+    return 1;
 }
 
+/*
+ * Reads an index value from context->data + offset into
+ * rocksdb_ctx->index_ctx.prev_bh.
+ * 
+ * Index values are block handles to data blocks. For format_version >= 4, index
+ * values are delta compressed. When sizes->shared_size == 0, the value is the
+ * block handle. Otherwise, the value is a varsignedint64 representing the
+ * difference in size between this data block and the previous data block. This
+ * can be used to compute the block handle to this data block.
+ * 
+ * Returns bytes read on success, or 0 on failure.
+ */
 __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     struct block_handle *prev_bh = &rocksdb_ctx->index_ctx.prev_bh;
@@ -434,7 +460,7 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
 
         delta_size = rocksdb_ctx->varint_ctx.varsigned64;
 
-        // Taken from struct IndexValue::EncodeTo
+        // Taken from struct IndexValue::EncodeTo()
         prev_bh->offset = prev_bh->offset + prev_bh->size + kBlockTrailerSize;
         prev_bh->size = prev_bh->size + delta_size; // unsigned + signed
     }
@@ -442,6 +468,18 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
     return bytes_read;
 }
 
+/*
+ * Reads a single key-value pair from context->data + offset.
+ * 
+ * The key-value pair has the following format:
+ *     shared_size (varint32), non_shared_size (varint32)
+ *     key (non_shared_size bytes)
+ *     value (block handle or delta_size (varsignedint64))
+ * 
+ * Returns 1 if the key is found, 0 if not, or a negative value on error.
+ * Stores the next offset in rocksdb_ctx->index_ctx.offset and the block handle
+ * in rocksdb_ctx->index_ctx.prev_bh.
+ */
 __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     struct key_size key_size;
@@ -464,54 +502,74 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     rocksdb_ctx->index_ctx.offset = offset;
 
-    // If user key > current key, then user key is not in the corresponding data block
+    /*
+     * The key for a data block is >= the largest key in the data block, but
+     * smaller than the smallest key in the next data block. As such, if
+     * user_key > current_key, user_key is not in the corresponding data block.
+     */
     if (strncmp_key(context) > 0)
         return 0; // not found
 
     return 1; // found
 }
 
-// index_block_offset is initial offset to index, offset is where we are now
-__noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t index_end, uint64_t offset, int *found) {
-    int loop_ret, loop_counter = 0;
-    const int LOOP_COUNTER_THRESH = 2500;
+/*
+ * Second-level loop for index key-value pair parsing. Starts reading at
+ * context->data + offset. Two nested loops allows us to bypass verifier limits.
+ * 
+ * Returns 1 if the key is found, 0 if not, and a negative value on error.
+ */
+__noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t index_end, uint64_t offset) {
+    int loop_ret, loop_count = 0;
+    const int LOOP_MAX = 2500;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
-    while (offset < index_end && loop_counter < LOOP_COUNTER_THRESH) {
+    /*
+     * Offload each iteration of the loop to index_block_loop(). This allows us
+     * to implement complex logic without running afoul of the verifier's jump
+     * limit through function-by-function verification.
+     * 
+     * In order to satisfy the verifier, we artifically cap the loop at LOOP_MAX
+     * iterations, which should be enough to read the whole data block. LOOP_MAX
+     * was determined based on the eBPF verifier's jump verifier and how many
+     * jumps there are in each iteration of the while loop.
+     */
+    while (offset < index_end && loop_count < LOOP_MAX) {
         loop_ret = index_block_loop(context, offset);
         offset = rocksdb_ctx->index_ctx.offset;
-
-        loop_counter++;
+        loop_count++;
 
         if (loop_ret < 0)
             return loop_ret;
         else if (loop_ret == 0)
             continue;
-        else if (loop_ret == 1) {
-            if (found)
-                *found = 1;
-            break;
-        }
+        else if (loop_ret == 1)
+            return 1;
     }
 
     return 0;
 }
 
+/*
+ * Iterates over all key-value pairs in an index block. Starts reading from
+ * context->data + block_offset.
+ * 
+ * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
+ */
 __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_offset) {
     uint8_t index_type;
-    int loop_ret, found = 0, i;
-    const int LOOP_COUNTER_THRESH = 2000;
+    int loop_ret, loop_count = 0;
+    const int LOOP_MAX = 2000;
     uint32_t num_restarts;
-    uint64_t index_end, index_offset = block_offset;
+    uint64_t index_end, offset = block_offset;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
-    // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
-    // index_type = kBinarySearch and index_key_is_user_key
+    // Assuming index_value_is_delta_encoded, index_type = kBinarySearch, index_key_is_user_key
 
-    if (block_offset > EBPF_BLOCK_SIZE || block_offset < 0)
+    if (block_offset > EBPF_BLOCK_SIZE)
         return -EBPF_EINVAL;
 
-    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE || rocksdb_ctx->handle.size < BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN)
+    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE)
         return -EBPF_EINVAL;
 
     if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0)
@@ -520,29 +578,49 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
     // TODO: check index type
 
     index_end = block_data_end(block_offset, rocksdb_ctx->handle.size, num_restarts);
-
-    for (i = 0; i < LOOP_COUNTER_THRESH && index_offset < index_end; i++) {
-        loop_ret = parse_index_block_loop(context, index_end, index_offset, &found);
+    
+    /*
+     * Offload each iteration of the loop to parse_index_block_loop(). This
+     * allows us to implement complex logic without running afoul of the
+     * verifier's jump limit through function-by-function verification.
+     * 
+     * In order to satisfy the verifier, we artifically cap the loop at LOOP_MAX
+     * iterations, which should be enough to read the whole data block. LOOP_MAX
+     * was determined based on the eBPF verifier's jump verifier and how many
+     * jumps there are in each iteration of the while loop.
+     * 
+     * This is the first level of two nested loops for index parsing. This
+     * allows us to bypass the verifier's jump limits.
+     */
+    while (offset < index_end && loop_count < LOOP_MAX) {
+        loop_ret = parse_index_block_loop(context, index_end, offset);
+        loop_count++;
 
         if (loop_ret < 0)
             return loop_ret;
-        if (found)
+        else if (loop_ret == 0)
+            continue;
+        else if (loop_ret == 1)
             break;
 
-        index_offset = rocksdb_ctx->index_ctx.offset;
+        offset = rocksdb_ctx->index_ctx.offset;
     }
 
-    if (i >= LOOP_COUNTER_THRESH)
+    if (loop_count >= LOOP_MAX)
         return -EBPF_EINVAL;
 
-    if (index_offset >= index_end)
+    if (offset >= index_end)
         return 0; // not found
 
     prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_bh, kDataStage);
 
-    return found;
+    return 1; // found
 }
 
+/*
+ * Read version from footer_ptr + footer_offset into footer.
+ * Returns 0 on success or -1 on error.
+ */
 __inline int footer_read_version(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
     footer->version = *(uint32_t *)(footer_ptr + footer_offset + VERSION_OFFSET);
 
@@ -554,6 +632,10 @@ __inline int footer_read_version(const uint8_t *footer_ptr, struct footer *foote
     return 0;
 }
 
+/*
+ * Read checksum type from footer_ptr + footer_offset into footer.
+ * Returns 0 on success or -1 on error.
+ */
 __inline int footer_read_checksum(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
     footer->checksum = *(uint8_t *)(footer_ptr + footer_offset + CHECKSUM_OFFSET);
 
@@ -565,7 +647,10 @@ __inline int footer_read_checksum(const uint8_t *footer_ptr, struct footer *foot
     return 0;
 }
 
-// Returns offset within the footer to the footer block handles
+/*
+ * Read metadata from footer_ptr + footer_offset into footer.
+ * Returns 0 on success or -1 on error.
+ */
 __inline int64_t footer_read_metadata(const uint8_t *footer_ptr, struct footer *footer, const uint64_t footer_offset) {
     footer->magic_number = *(uint64_t *)(footer_ptr + footer_offset + MAGIC_NUMBER_OFFSET);
 
@@ -587,23 +672,32 @@ __inline int64_t footer_read_metadata(const uint8_t *footer_ptr, struct footer *
     return 0;
 }
 
-// Requires footer->version to be set
+/*
+ * Read block handles from context->data + footer_offset into footer. Requires
+ * footer->version to be set.
+ * 
+ * Returns 0 on success, or -1 on error.
+ */
 __inline uint32_t footer_read_block_handles(struct bpf_xrp *context, struct footer *footer, const uint64_t footer_offset) {
     uint32_t varint_delta;
-    uint64_t footer_ptr_offset = footer_offset + bh_offset(footer->version);
+    uint64_t offset = footer_offset + footer_bh_offset(footer->version);
 
     // Metaindex block-handle
-    varint_delta = read_block_handle(context, &footer->metaindex_handle, footer_ptr_offset);
+    varint_delta = read_block_handle(context, &footer->metaindex_handle, offset);
     if (varint_delta == 0)
         return -1;
 
     // Index block-handle
-    if (read_block_handle(context, &footer->index_handle, footer_ptr_offset + varint_delta) == 0)
+    if (read_block_handle(context, &footer->index_handle, offset + varint_delta) == 0)
         return -1;
 
     return 0;
 }
 
+/*
+ * Parse the footer and set up metadata for index parsing.
+ * Returns 0 on success or a negative value on error.
+ */
 __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offset) {
     /*
      * Verifier thinks that footer.index_handle may be uninitialized in
@@ -629,35 +723,39 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
     return 0;
 }
 
+/*
+ * Reset rocksdb_ebpf_ctx for reading from the next SST file in
+ * rocksdb_ctx->file_array.
+ */
 __noinline int next_sst_file(struct bpf_xrp *context) {
     int curr_idx, data_size;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
+    struct file_context *file_array = rocksdb_ctx->file_array.array;
 
     // Is there another file to process?
-    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1
-    || rocksdb_ctx->file_array.curr_idx > 15) {
+    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1 || rocksdb_ctx->file_array.curr_idx > 15) {
         context->done = true;
         return 0;
     }
 
     // Prepare to process the next file
     rocksdb_ctx->file_array.curr_idx++;
-    // 1. Set the parser state
-    curr_idx = rocksdb_ctx->file_array.curr_idx;
-    rocksdb_ctx->handle.offset = rocksdb_ctx->file_array.array[curr_idx].offset;
-    rocksdb_ctx->handle.size = rocksdb_ctx->file_array.array[curr_idx].bytes_to_read;
-    rocksdb_ctx->block_offset = rocksdb_ctx->file_array.array[curr_idx].block_offset;
-    rocksdb_ctx->stage = rocksdb_ctx->file_array.array[curr_idx].stage;
 
-    // 2. Set the resubmission settings
-    data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    // Set the parser state
+    curr_idx = rocksdb_ctx->file_array.curr_idx;
+    rocksdb_ctx->handle.offset = file_array[curr_idx].offset;
+    rocksdb_ctx->handle.size = file_array[curr_idx].bytes_to_read;
+    rocksdb_ctx->block_offset = file_array[curr_idx].block_offset;
+    rocksdb_ctx->stage = file_array[curr_idx].stage;
 
     memset(&rocksdb_ctx->data_ctx, 0, sizeof(rocksdb_ctx->data_ctx));
     memset(&rocksdb_ctx->varint_ctx, 0, sizeof(rocksdb_ctx->varint_ctx));
     memset(&rocksdb_ctx->index_ctx, 0, sizeof(rocksdb_ctx->index_ctx));
 
-    context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;
-    context->next_addr[0] = ROUND_DOWN(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
+    // Set the resubmission settings
+    data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
+    context->fd_arr[0] = file_array[curr_idx].fd;
+    context->next_addr[0] = ROUND_DOWN(file_array[curr_idx].offset, EBPF_BLOCK_SIZE);
     context->size[0] = ROUND_UP(data_size, PAGE_SIZE);
     context->done = false;
     return 0;
