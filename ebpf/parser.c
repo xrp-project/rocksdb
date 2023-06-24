@@ -772,28 +772,34 @@ SEC("prog")
 __u32 rocksdb_lookup(struct bpf_xrp *context) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     enum parse_stage stage = rocksdb_ctx->stage;
+    int ret;
 
     context->fd_arr[0] = context->cur_fd;
 
     if (stage == kFooterStage) {
         return parse_footer(context, rocksdb_ctx->block_offset);
     } else if (stage == kIndexStage) {
-        if (parse_index_block(context, rocksdb_ctx->block_offset) == 1) // found
+        if ((ret = parse_index_block(context, rocksdb_ctx->block_offset)) == 1) // found
             return 0;
+        else if (ret < 0) // error
+            return -EBPF_EINVAL;
 
         // Not found, go to next SST file
         next_sst_file(context);
 
         return 0;
     } else if (stage == kDataStage) {
-        if (parse_data_block(context, rocksdb_ctx->block_offset) == 1) { // found
+        if ((ret = parse_data_block(context, rocksdb_ctx->block_offset)) == 1) { // found
             rocksdb_ctx->found = 1;
             context->next_addr[0] = 0;
             context->size[0] = 0;
             context->done = true;
-        } else { // Not found, go to next SST file
-            next_sst_file(context);
+        } else if (ret < 0) {
+            return -EBPF_EINVAL;
         }
+
+        // Not found, go to next SST file
+        next_sst_file(context);
 
         return 0;
     }
