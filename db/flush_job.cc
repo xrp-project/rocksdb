@@ -12,9 +12,6 @@
 #include <algorithm>
 #include <cinttypes>
 #include <vector>
-#include <iostream>
-#include <thread>
-
 
 #include "db/builder.h"
 #include "db/db_iter.h"
@@ -48,8 +45,6 @@
 #include "util/coding.h"
 #include "util/mutexlock.h"
 #include "util/stop_watch.h"
-
-#include "xrp/xrp_context.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -358,11 +353,6 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
     stream << "file_cpu_read_nanos"
            << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
   }
-
-  std::cerr << "flush happened!" << std::endl;
-  //std::thread t(handleCompaction, 5);
-  //t.detach();
-
 
   return s;
 }
