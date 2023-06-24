@@ -68,7 +68,7 @@ struct index_ctx {
     uint32_t index_offset;
 };
 
-struct data_parse_context {
+struct data_ctx {
     unsigned char value[MAX_VALUE_LEN + 1];
     uint32_t data_offset;
     enum value_type vt;
@@ -85,7 +85,7 @@ struct rocksdb_ebpf_ctx {
     union varint_ctx varint_ctx;
     union {
         struct index_ctx index_ctx;
-        struct data_parse_context data_context;
+        struct data_ctx data_ctx;
     };
     struct file_array file_array;
 };

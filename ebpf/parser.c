@@ -307,8 +307,8 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
  *     value (value_length bytes)
  * 
  * Returns 1 if the key is found, 0 if not, and a negative value on error.
- * Stores the next offset in rocksdb_ctx->data_context.data_offset. If the value
- * is found, it's stored in rocksdb_ctx->data_context.value, along with the
+ * Stores the next offset in rocksdb_ctx->data_ctx.data_offset. If the value
+ * is found, it's stored in rocksdb_ctx->data_ctx.value, along with the
  * sequence number and value type.
  */
 __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
@@ -345,7 +345,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
      */ 
     if (strncmp_key(context) != 0) {
         offset += kNumInternalBytes + value_length;
-        rocksdb_ctx->data_context.data_offset = offset;
+        rocksdb_ctx->data_ctx.data_offset = offset;
         return 0;
     }
 
@@ -354,7 +354,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
         return -EBPF_EINVAL;
 
     packed_type_seq = *(uint64_t *)(data_block + ((offset & (EBPF_DATA_BUFFER_SIZE - 1))));
-    unpack_sequence_and_type(packed_type_seq, &rocksdb_ctx->data_context.seq, &rocksdb_ctx->data_context.vt);
+    unpack_sequence_and_type(packed_type_seq, &rocksdb_ctx->data_ctx.seq, &rocksdb_ctx->data_ctx.vt);
 
     offset += kNumInternalBytes;
 
@@ -366,9 +366,9 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
         return -EBPF_EINVAL;
 
     for (int i = 0; i < (value_length & MAX_VALUE_LEN); i++)
-        rocksdb_ctx->data_context.value[i] = data_block[(offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)];
+        rocksdb_ctx->data_ctx.value[i] = data_block[(offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)];
 
-    rocksdb_ctx->data_context.value[value_length & MAX_VALUE_LEN] = '\0';
+    rocksdb_ctx->data_ctx.value[value_length & MAX_VALUE_LEN] = '\0';
 
     return 1;
 }
@@ -393,7 +393,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_of
 
     while (data_offset < data_end && data_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = data_block_loop(context, data_offset);
-        data_offset = rocksdb_ctx->data_context.data_offset;
+        data_offset = rocksdb_ctx->data_ctx.data_offset;
 
         loop_counter++;
 
@@ -652,7 +652,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     // 2. Set the resubmission settings
     data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
 
-    memset(&rocksdb_ctx->data_context, 0, sizeof(rocksdb_ctx->data_context));
+    memset(&rocksdb_ctx->data_ctx, 0, sizeof(rocksdb_ctx->data_ctx));
     memset(&rocksdb_ctx->varint_ctx, 0, sizeof(rocksdb_ctx->varint_ctx));
     memset(&rocksdb_ctx->index_ctx, 0, sizeof(rocksdb_ctx->index_ctx));
 

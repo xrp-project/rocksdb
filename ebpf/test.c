@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
         die("write() failed");
 
     if (ctx->found == 1)
-        printf("Value found: %s\n", ctx->data_context.value);
+        printf("Value found: %s\n", ctx->data_ctx.value);
     else
         printf("Value not found\n");
 

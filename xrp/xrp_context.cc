@@ -126,11 +126,11 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
         s = Status::Corruption();
 
     if (ctx->found == 1) {
-        ValueType v = static_cast<ValueType>(ctx->data_context.vt);
-        ParsedInternalKey internal_key = ParsedInternalKey(key, ctx->data_context.seq, v);
+        ValueType v = static_cast<ValueType>(ctx->data_ctx.vt);
+        ParsedInternalKey internal_key = ParsedInternalKey(key, ctx->data_ctx.seq, v);
 
         if (v == kTypeValue) {
-            const char *ptr = reinterpret_cast<const char *>(ctx->data_context.value);
+            const char *ptr = reinterpret_cast<const char *>(ctx->data_ctx.value);
             value.data_ = ptr;
             value.size_ = strlen(ptr);
         }
