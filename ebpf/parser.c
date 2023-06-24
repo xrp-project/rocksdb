@@ -782,7 +782,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         if ((ret = parse_index_block(context, rocksdb_ctx->block_offset)) == 1) // found
             return 0;
         else if (ret < 0) // error
-            return -EBPF_EINVAL;
+            return ret;
 
         // Not found, go to next SST file
         next_sst_file(context);
@@ -795,7 +795,7 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
             context->size[0] = 0;
             context->done = true;
         } else if (ret < 0) {
-            return -EBPF_EINVAL;
+            return ret;
         }
 
         // Not found, go to next SST file
