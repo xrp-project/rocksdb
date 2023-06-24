@@ -735,6 +735,8 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     // Is there another file to process?
     if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1 || rocksdb_ctx->file_array.curr_idx > 15) {
         context->done = true;
+        context->next_addr[0] = 0;
+        context->size[0] = 0;
         return 0;
     }
 
@@ -758,48 +760,43 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     context->next_addr[0] = ROUND_DOWN(file_array[curr_idx].offset, EBPF_BLOCK_SIZE);
     context->size[0] = ROUND_UP(data_size, PAGE_SIZE);
     context->done = false;
+
     return 0;
 }
 
+/*
+ * Driver function for the eBPF program. Calls relevant function based on parser
+ * state.
+ */
 SEC("prog")
 __u32 rocksdb_lookup(struct bpf_xrp *context) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     enum parse_stage stage = rocksdb_ctx->stage;
-    int ret = 0;
 
     context->fd_arr[0] = context->cur_fd;
-    bpf_printk("Parse stage: %d\n", stage);
 
     if (stage == kFooterStage) {
         return parse_footer(context, rocksdb_ctx->block_offset);
     } else if (stage == kIndexStage) {
-        ret = parse_index_block(context, rocksdb_ctx->block_offset);
-
-        if (ret == 1) // found
+        if (parse_index_block(context, rocksdb_ctx->block_offset) == 1) // found
             return 0;
 
-        rocksdb_ctx->found = 0; // not found
+        // Not found, go to next SST file
         next_sst_file(context);
+
         return 0;
     } else if (stage == kDataStage) {
-        bpf_printk("Data stage\n");
-        ret = parse_data_block(context, rocksdb_ctx->block_offset);
-        rocksdb_ctx->found = ret == 1;
-
-        if (ret == 1)
-            ret = 0;
-
-        if (!rocksdb_ctx->found){
+        if (parse_data_block(context, rocksdb_ctx->block_offset) == 1) { // found
+            rocksdb_ctx->found = 1;
+            context->next_addr[0] = 0;
+            context->size[0] = 0;
+            context->done = true;
+        } else { // Not found, go to next SST file
             next_sst_file(context);
-            return 0;
         }
-    } else {
-        return -EBPF_EINVAL;
+
+        return 0;
     }
 
-    context->next_addr[0] = 0;
-    context->size[0] = 0;
-    context->done = true;
-
-    return ret;
+    return -EBPF_EINVAL;
 }
