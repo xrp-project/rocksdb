@@ -59,7 +59,7 @@ __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offs
         }
         else {
             result |= (byte << shift);
-            rocksdb_ctx->varint_context.varint64 = result;
+            rocksdb_ctx->varint_ctx.varint64 = result;
             return counter;
         }
     }
@@ -91,7 +91,7 @@ __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offs
         }
         else {
             result |= (byte << shift);
-            rocksdb_ctx->varint_context.varint32 = result;
+            rocksdb_ctx->varint_ctx.varint32 = result;
             return counter;
         }
     }
@@ -116,7 +116,7 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
     uint32_t ret;
 
     ret = decode_varint64(context, offset);
-    rocksdb_ctx->varint_context.varsigned64 = zigzagToI64(rocksdb_ctx->varint_context.varint64);
+    rocksdb_ctx->varint_ctx.varsigned64 = zigzagToI64(rocksdb_ctx->varint_ctx.varint64);
     return ret;
 }
 
@@ -160,14 +160,14 @@ __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle
         return 0;
 
     varint_delta = varint_ret;
-    bh->offset = rocksdb_ctx->varint_context.varint64;
+    bh->offset = rocksdb_ctx->varint_ctx.varint64;
 
     varint_ret = decode_varint64(context, offset + varint_delta);
     if (varint_ret == 0)
         return 0;
 
     varint_delta += varint_ret;
-    bh->size = rocksdb_ctx->varint_context.varint64;
+    bh->size = rocksdb_ctx->varint_ctx.varint64;
 
     return varint_delta;
 }
@@ -191,13 +191,13 @@ __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes
         return 0;
 
     varint_delta = varint_ret;
-    sizes->shared_size = rocksdb_ctx->varint_context.varint32;
+    sizes->shared_size = rocksdb_ctx->varint_ctx.varint32;
 
     if ((varint_ret = decode_varint32(context, offset + varint_delta)) == 0)
         return 0;
 
     varint_delta += varint_ret;
-    sizes->non_shared_size = rocksdb_ctx->varint_context.varint32;
+    sizes->non_shared_size = rocksdb_ctx->varint_ctx.varint32;
 
     return varint_delta;
 }
@@ -329,7 +329,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
         return -EBPF_EINVAL;
 
     offset += bytes_read;
-    value_length = rocksdb_ctx->varint_context.varint32;
+    value_length = rocksdb_ctx->varint_ctx.varint32;
 
     // Remove internal footer from key size
     key_size.non_shared_size -= kNumInternalBytes;
@@ -432,7 +432,7 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
         if ((bytes_read = decode_varsignedint64(context, offset)) == 0)
             return 0;
 
-        delta_size = rocksdb_ctx->varint_context.varsigned64;
+        delta_size = rocksdb_ctx->varint_ctx.varsigned64;
 
         // Taken from struct IndexValue::EncodeTo
         prev_bh->offset = prev_bh->offset + prev_bh->size + kBlockTrailerSize;
@@ -653,7 +653,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
 
     memset(&rocksdb_ctx->data_context, 0, sizeof(rocksdb_ctx->data_context));
-    memset(&rocksdb_ctx->varint_context, 0, sizeof(rocksdb_ctx->varint_context));
+    memset(&rocksdb_ctx->varint_ctx, 0, sizeof(rocksdb_ctx->varint_ctx));
     memset(&rocksdb_ctx->index_context, 0, sizeof(rocksdb_ctx->index_context));
 
     context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;

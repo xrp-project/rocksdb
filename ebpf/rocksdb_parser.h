@@ -162,7 +162,7 @@ enum parse_stage {
     kDataStage = 0x2
 };
 
-union varint_context {
+union varint_ctx {
     uint64_t varint64;
     uint32_t varint32;
     int64_t varsigned64;
@@ -207,7 +207,7 @@ struct rocksdb_ebpf_ctx {
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
     struct block_handle handle; // need to set this from userspace!
-    union varint_context varint_context;
+    union varint_ctx varint_ctx;
     union {
         struct index_parse_context index_context;
         struct data_parse_context data_context;
