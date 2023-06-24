@@ -626,6 +626,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
      */
     while (offset < index_end && loop_count < LOOP_MAX) {
         loop_ret = parse_index_block_loop(context, index_end, offset);
+        offset = rocksdb_ctx->index_ctx.offset;
         loop_count++;
 
         if (loop_ret < 0)
@@ -635,7 +636,6 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
         else if (loop_ret == 1)
             break;
 
-        offset = rocksdb_ctx->index_ctx.offset;
     }
 
     if (loop_count >= LOOP_MAX) {
