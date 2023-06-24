@@ -2157,6 +2157,10 @@ Status BlockBasedTable::ApproximateKeyAnchors(const ReadOptions& read_options,
   return Status::OK();
 }
 
+// A version of BlockBasedTable::Get() that only reads from the cache, rather
+// than going to disk. Checks if the index blocks or data blocks are cached, and
+// if the key can be found in the data block, it returns as vanilla RocksDB
+// would (without going to BPFoF).
 Status BlockBasedTable::CacheGet(const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,
@@ -2166,12 +2170,13 @@ Status BlockBasedTable::CacheGet(const Slice& key,
 
   Status s;
 
+  // For the lookup to cache, set no_io mode, which ensures that no disk reads
+  // occur.
   const bool no_io = true;
   ReadOptions read_options = ReadOptions();
-  read_options.read_tier = kBlockCacheTier;
+  read_options.read_tier = kBlockCacheTier; 
 
-  bool data_block_in_cache = false;
-  //bool hasIndex = false;
+  bool skip_file = false;
 
   // First check the full filter
   // If full filter not useful, Then go into each block
@@ -2187,8 +2192,9 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       filter, key, no_io, prefix_extractor, get_context, &lookup_context,
       read_options.rate_limiter_priority);
 
+  // Filter found (with no-io), and doesn't match. This guarentees that the
+  // key does not exist in the file, so it can be skipped.
   if (!may_match) {
-    // XRP: Filter found (with no-io), and doesn't match. We can skip file.
     xrp_file->fd = -1;
     return Status::OK();
   }
@@ -2201,13 +2207,16 @@ Status BlockBasedTable::CacheGet(const Slice& key,
     need_upper_bound_check = PrefixExtractorChanged(prefix_extractor);
   }
 
+  // IndexIterator iterates through the Index block and checks if the key is
+  // within each index's bounds, If this operation fails with IsIncomplete(), it
+  // means that we do not have a copy of the index block in cache.
   auto iiter =
       NewIndexIterator(read_options, need_upper_bound_check, &iiter_on_stack,
                         get_context, &lookup_context);
 
+  // Checks if we have the index block in cache. Will return if the index block
+  // couldn't be read from cache - we need to read it with BPFoF.
   if (iiter->status().IsIncomplete()) {
-    // We were able to look up the index block, start parsing at data block
-    //hasIndex = true;
     xrp_file->stage = kIndexStage;
     return Status::OK();
   }
@@ -2221,7 +2230,13 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       rep_->internal_comparator.user_comparator()->timestamp_size();
   bool matched = false;  // if such user key matched a key in SST
   bool done = false;
+
+  // This iterator is misleading. In the configurations of RocksDB that we are
+  // using, this for loop will only iterate once. When iiter->Seek() is called,
+  // iiter->value() has the metadata about the data block we need.
   for (iiter->Seek(key); iiter->Valid() && !done; iiter->Next()) {
+    // IndexValue contains what information each item in the index block holds.
+    // It can be used to find the offset/size of the data block
     IndexValue v = iiter->value();
 
     if (!v.first_internal_key.empty() && !skip_filters &&
@@ -2234,9 +2249,15 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       break;
     }
 
+    // At this point, we've have the metadata about the data block's
+    // location/size. Populate the XRP context for this file, 
     xrp_file->bytes_to_read = v.handle.size();
     xrp_file->offset = v.handle.offset();
     xrp_file->stage = kDataStage;
+
+    // After this point, we still try to read the contents of the data block in
+    // case the value is entirely in cache, or we can rule out this file if the
+    // data block is in cache, but the value isn't in the data block
 
     BlockCacheLookupContext lookup_data_block_context{
         TableReaderCaller::kUserGet, tracing_get_id,
@@ -2249,16 +2270,11 @@ Status BlockBasedTable::CacheGet(const Slice& key,
         &lookup_data_block_context, /*prefetch_buffer=*/nullptr,
         /*for_compaction=*/false, /*async_read=*/false, tmp_status);
 
-    if (no_io && biter.status().IsIncomplete()) {
-      // couldn't get block from block_cache
-      // Update Saver.state to Found because we are only looking for
-      // whether we can guarantee the key is not there when "no_io" is set
-      
-      /* XRP, we remove this because it sets key to found */
-      //get_context->MarkKeyMayExist();
-
+    // The data block could not be found in cache. The XRPContext has been
+    // populated with the index/offset of the data block, so we can return.
+    if (biter.status().IsIncomplete()) {
       s = biter.status();
-      break;
+      return s;
     }
 
     if (!biter.status().ok()) {
@@ -2276,8 +2292,8 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       // from the top level for-loop.
       done = true;
 
-      // XRP: key cannot be in data block, so we skip file
-      data_block_in_cache = true;
+      // Key cannot be in this data block, therefore BPFoF can skip the file
+      skip_file = true;
     } else {
       // Call the *saver function on each entry/block until it returns false
       for (; biter.Valid(); biter.Next()) {
@@ -2297,8 +2313,9 @@ Status BlockBasedTable::CacheGet(const Slice& key,
       }
       s = biter.status();
 
-      // Data block has been traversed and no key was found
-      data_block_in_cache = true;
+      // Data block has been traversed and no key was found. Therefore, BPFoF
+      // can skip the file knowing the key cannot be in the block
+      skip_file = true;
     }
     
     if (done) {
@@ -2309,13 +2326,15 @@ Status BlockBasedTable::CacheGet(const Slice& key,
     s = iiter->status();
   }
 
+  // We could read the index and data blocks from cache, but the key wasn't
+  // found. Therefore, BPFoF can skip the file
   if (s.ok() && !matched) {
-    // XRP: Key is not in data block, we can skip file
-    data_block_in_cache = true;
+    skip_file = true;
   }
 
-  if (data_block_in_cache) {
-    xrp_file->fd = -1; // very bad implementation atm
+  // Hack to skip the file - set fd to -1.
+  if (skip_file) {
+    xrp_file->fd = -1;
   }
  
   return s;
