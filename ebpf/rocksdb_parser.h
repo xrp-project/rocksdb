@@ -200,7 +200,7 @@ struct file_array {
     uint8_t count;
 };
 
-struct rocksdb_ebpf_context {
+struct rocksdb_ebpf_ctx {
     uint64_t block_offset; // offset of the RocksDB block in the data buffer
     enum parse_stage stage;
     int found;

@@ -70,7 +70,7 @@ static void buffer_release(uint8_t *data_buf, uint8_t *scratch_buf) {
 }
 
 // Returns offset into sst_fd to read from
-static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_context *ctx) {
+static uint64_t context_setup(int sst_fd, char *key, struct rocksdb_ebpf_ctx *ctx) {
     struct stat st;
     uint64_t block_offset, footer_offset;
 
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
     char *filename, *key;
     uint8_t *data_buf, *scratch_buf;
     clock_t t;
-    struct rocksdb_ebpf_context *ctx;
+    struct rocksdb_ebpf_ctx *ctx;
 
     if (argc != 3) {
         printf("usage: ./test <sst-file> <key>\n");
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
     if (buffer_setup(&data_buf, &scratch_buf) != 0)
         exit(1);
 
-    ctx = (struct rocksdb_ebpf_context *)scratch_buf;
+    ctx = (struct rocksdb_ebpf_ctx *)scratch_buf;
 
     if ((offset = context_setup(sst_fd, key, ctx)) < 0)
         exit(1);

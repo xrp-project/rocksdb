@@ -71,7 +71,7 @@ XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): i
         throw std::runtime_error("aligned_alloc() failed");
 
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
-    ctx = reinterpret_cast<struct rocksdb_ebpf_context *>(scratch_buf);
+    ctx = reinterpret_cast<struct rocksdb_ebpf_ctx *>(scratch_buf);
 }
 
 XRPContext::~XRPContext() {

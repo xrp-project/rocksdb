@@ -75,7 +75,7 @@ struct data_parse_context {
     uint64_t seq;
 };
 
-struct rocksdb_ebpf_context {
+struct rocksdb_ebpf_ctx {
     uint64_t block_offset;
     enum parse_stage stage;
     int found;
@@ -111,7 +111,7 @@ class XRPContext {
     uint8_t *data_buf;
     uint8_t *scratch_buf;
     const size_t huge_page_size = 1 << 21;
-    struct rocksdb_ebpf_context *ctx;
+    struct rocksdb_ebpf_ctx *ctx;
 
 };
 

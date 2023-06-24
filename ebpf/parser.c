@@ -43,7 +43,7 @@ char LICENSE[] SEC("license") = "GPL";
  */
 __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offset) {
     const uint8_t *data_buffer = context->data;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint64_t result = 0;
     uint32_t counter = 0;
 
@@ -76,7 +76,7 @@ __noinline uint32_t decode_varint64(struct bpf_xrp *context, const uint64_t offs
  */
 __noinline uint32_t decode_varint32(struct bpf_xrp *context, const uint64_t offset) {
     const uint8_t *data_buffer = context->data;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint32_t result = 0, counter = 0;
 
     if (offset < 0 || offset > EBPF_DATA_BUFFER_SIZE - MAX_VARINT32_LEN)
@@ -112,7 +112,7 @@ __inline int64_t zigzagToI64(uint64_t n) {
  * Encoding: https://protobuf.dev/programming-guides/encoding/#signed-ints
  */
 __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_t offset) {
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint32_t ret;
 
     ret = decode_varint64(context, offset);
@@ -125,7 +125,7 @@ __noinline uint32_t decode_varsignedint64(struct bpf_xrp *context, const uint64_
  */
 __noinline int strncmp_key(struct bpf_xrp *context) {
     uint8_t n = MAX_KEY_LEN;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint8_t *user_key = rocksdb_ctx->key;
     uint8_t *block_key = rocksdb_ctx->temp_key;
 
@@ -153,7 +153,7 @@ __noinline int strncmp_key(struct bpf_xrp *context) {
  */
 __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle *bh, uint64_t offset) {
     uint32_t varint_delta, varint_ret;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     varint_ret = decode_varint64(context, offset);
     if (varint_ret == 0)
@@ -185,7 +185,7 @@ __inline uint32_t read_block_handle(struct bpf_xrp *context, struct block_handle
  */
 __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     uint32_t varint_ret, varint_delta;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     if ((varint_ret = decode_varint32(context, offset)) == 0)
         return 0;
@@ -211,7 +211,7 @@ __inline uint32_t read_key_sizes(struct bpf_xrp *context, struct key_size *sizes
  */
 __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     /* TODO investigate why passing in a pointer with func-by-func verification works */
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint8_t *key = rocksdb_ctx->temp_key;
     uint8_t *block = context->data;
 
@@ -248,7 +248,7 @@ __noinline int read_key(struct bpf_xrp *context, struct key_size *sizes, uint64_
  * Returns 0 on success, or -1 on failure.
  */
 __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, uint8_t* index_type, uint32_t* num_restarts) {
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     uint32_t block_end_offset, block_footer;
 
     block_end_offset = offset + rocksdb_ctx->handle.size - BLOCK_FOOTER_RESTART_INDEX_TYPE_LEN;
@@ -273,7 +273,7 @@ __inline int read_block_footer(struct bpf_xrp *context, const uint32_t offset, u
  */
 __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, enum parse_stage stage) {
     uint64_t block_size;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     rocksdb_ctx->handle = *bh;
 
@@ -317,7 +317,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
     volatile uint32_t value_length;
     uint64_t packed_type_seq;
     struct key_size key_size;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0)
         return -EBPF_EINVAL;
@@ -376,7 +376,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
 __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_offset) {
     uint8_t index_type;
     uint32_t num_restarts, data_end, data_offset = block_offset;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     int loop_ret, loop_counter = 0, found = 0;
     const int LOOP_COUNTER_THRESH = 2000;
 
@@ -419,7 +419,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_of
 }
 
 __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     struct block_handle *prev_bh = &rocksdb_ctx->index_context.prev_data_handle;
     uint32_t bytes_read;
 
@@ -443,7 +443,7 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
 }
 
 __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     struct key_size key_size;
     uint32_t bytes_read;
 
@@ -475,7 +475,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
 __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t index_end, uint64_t offset, int *found) {
     int loop_ret, loop_counter = 0;
     const int LOOP_COUNTER_THRESH = 2500;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     while (offset < index_end && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = index_block_loop(context, offset);
@@ -503,7 +503,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
     const int LOOP_COUNTER_THRESH = 2000;
     uint32_t num_restarts;
     uint64_t index_end, index_offset = block_offset;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     // Assuming index_value_is_delta_encoded, but index_block_restart_interval == 1 (default)
     // index_type = kBinarySearch and index_key_is_user_key
@@ -631,7 +631,7 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
 
 __noinline int next_sst_file(struct bpf_xrp *context) {
     int curr_idx, data_size;
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
     // Is there another file to process?
     if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1
@@ -665,7 +665,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
 
 SEC("prog")
 __u32 rocksdb_lookup(struct bpf_xrp *context) {
-    struct rocksdb_ebpf_context *rocksdb_ctx = (struct rocksdb_ebpf_context *)context->scratch;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     enum parse_stage stage = rocksdb_ctx->stage;
     int ret = 0;
 
