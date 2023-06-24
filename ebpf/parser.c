@@ -1,5 +1,4 @@
 #include <linux/bpf.h>
-#include <linux/const.h>
 #include <bpf/bpf_helpers.h>
 
 #include "data_block_footer.h"
