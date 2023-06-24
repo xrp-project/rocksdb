@@ -192,16 +192,12 @@ struct file_context {
     uint64_t bytes_to_read;
 };
 
-struct file_array {
-    struct file_context array[16];
-    uint8_t curr_idx;
-    uint8_t count;
-};
-
 struct rocksdb_ebpf_ctx {
     uint64_t block_offset; // offset of the RocksDB block in the data buffer
     enum parse_stage stage;
-    int found;
+    uint8_t found;
+    uint8_t curr_file_idx;
+    uint8_t file_count;
     char key[MAX_KEY_LEN + 1];
     char temp_key[MAX_KEY_LEN + 1]; // used for comparisons
     struct block_handle handle; // need to set this from userspace!
@@ -210,7 +206,7 @@ struct rocksdb_ebpf_ctx {
         struct index_ctx index_ctx;
         struct data_ctx data_ctx;
     };
-    struct file_array file_array;
+    struct file_context file_array[16];
 };
 
 // taken from <linux/const.h>

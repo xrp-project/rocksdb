@@ -768,10 +768,10 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
 __noinline int next_sst_file(struct bpf_xrp *context) {
     int curr_idx, data_size;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    struct file_context *file_array = rocksdb_ctx->file_array.array;
+    struct file_context *file_array = rocksdb_ctx->file_array;
 
     // Is there another file to process?
-    if (rocksdb_ctx->file_array.count == rocksdb_ctx->file_array.curr_idx + 1 || rocksdb_ctx->file_array.curr_idx > 15) {
+    if (rocksdb_ctx->file_count == rocksdb_ctx->curr_file_idx + 1 || rocksdb_ctx->curr_file_idx > 15) {
         context->done = true;
         context->next_addr[0] = 0;
         context->size[0] = 0;
@@ -779,10 +779,10 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     }
 
     // Prepare to process the next file
-    rocksdb_ctx->file_array.curr_idx++;
+    rocksdb_ctx->curr_file_idx++;
 
     // Set the parser state
-    curr_idx = rocksdb_ctx->file_array.curr_idx;
+    curr_idx = rocksdb_ctx->curr_file_idx;
     rocksdb_ctx->handle.offset = file_array[curr_idx].offset;
     rocksdb_ctx->handle.size = file_array[curr_idx].bytes_to_read;
     rocksdb_ctx->block_offset = file_array[curr_idx].block_offset;

@@ -99,12 +99,12 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
     Status s = Status::OK();
     uint32_t request_size;
 
-    if (key.size() > MAX_KEY_LEN || ctx->file_array.count == 0)
+    if (key.size() > MAX_KEY_LEN || ctx->file_count == 0)
         return Status::InvalidArgument();
 
     strncpy(ctx->key, key.data(), key.size());
 
-    struct file_context start_file = ctx->file_array.array[0];
+    struct file_context start_file = ctx->file_array[0];
     ctx->block_offset = start_file.block_offset;
     ctx->stage = start_file.stage; // TODO: change when using block cache
 
@@ -167,7 +167,7 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
 
     sst_fd = file->GetFd();
 
-    struct file_context *file_ctx = ctx->file_array.array + ctx->file_array.count++;
+    struct file_context *file_ctx = ctx->file_array + ctx->file_count++;
 
     if (cache_file.stage == kDataStage) {
         offset = (cache_file.offset / EBPF_BLOCK_SIZE) * EBPF_BLOCK_SIZE;
