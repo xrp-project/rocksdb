@@ -63,7 +63,7 @@ struct file_array {
     uint8_t count;
 };
 
-struct index_parse_context {
+struct index_ctx {
     struct block_handle prev_data_handle;
     uint32_t index_offset;
 };
@@ -84,7 +84,7 @@ struct rocksdb_ebpf_ctx {
     struct block_handle handle; // need to set this from userspace!
     union varint_ctx varint_ctx;
     union {
-        struct index_parse_context index_context;
+        struct index_ctx index_ctx;
         struct data_parse_context data_context;
     };
     struct file_array file_array;

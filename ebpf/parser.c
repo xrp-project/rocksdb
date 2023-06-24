@@ -420,7 +420,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_of
 
 __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
-    struct block_handle *prev_bh = &rocksdb_ctx->index_context.prev_data_handle;
+    struct block_handle *prev_bh = &rocksdb_ctx->index_ctx.prev_data_handle;
     uint32_t bytes_read;
 
     if (sizes->shared_size == 0) {
@@ -462,7 +462,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     offset += bytes_read;
 
-    rocksdb_ctx->index_context.index_offset = offset;
+    rocksdb_ctx->index_ctx.index_offset = offset;
 
     // If user key > current key, then user key is not in the corresponding data block
     if (strncmp_key(context) > 0)
@@ -479,7 +479,7 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
 
     while (offset < index_end && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = index_block_loop(context, offset);
-        offset = rocksdb_ctx->index_context.index_offset;
+        offset = rocksdb_ctx->index_ctx.index_offset;
 
         loop_counter++;
 
@@ -529,7 +529,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
         if (found)
             break;
 
-        index_offset = rocksdb_ctx->index_context.index_offset;
+        index_offset = rocksdb_ctx->index_ctx.index_offset;
     }
 
     if (i >= LOOP_COUNTER_THRESH)
@@ -538,7 +538,7 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint32_t block_o
     if (index_offset >= index_end)
         return 0; // not found
 
-    prep_next_stage(context, &rocksdb_ctx->index_context.prev_data_handle, kDataStage);
+    prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_data_handle, kDataStage);
 
     return found;
 }
@@ -654,7 +654,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
 
     memset(&rocksdb_ctx->data_context, 0, sizeof(rocksdb_ctx->data_context));
     memset(&rocksdb_ctx->varint_ctx, 0, sizeof(rocksdb_ctx->varint_ctx));
-    memset(&rocksdb_ctx->index_context, 0, sizeof(rocksdb_ctx->index_context));
+    memset(&rocksdb_ctx->index_ctx, 0, sizeof(rocksdb_ctx->index_ctx));
 
     context->fd_arr[0] = rocksdb_ctx->file_array.array[curr_idx].fd;
     context->next_addr[0] = ROUND_DOWN(rocksdb_ctx->file_array.array[curr_idx].offset, EBPF_BLOCK_SIZE);
