@@ -175,7 +175,7 @@ struct index_ctx {
 
 struct data_ctx {
     unsigned char value[MAX_VALUE_LEN + 1];
-    uint32_t data_offset;
+    uint32_t offset;
     enum value_type vt;
     uint64_t seq;
 };

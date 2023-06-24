@@ -345,7 +345,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint32_t offset) {
      */ 
     if (strncmp_key(context) != 0) {
         offset += kNumInternalBytes + value_length;
-        rocksdb_ctx->data_ctx.data_offset = offset;
+        rocksdb_ctx->data_ctx.offset = offset;
         return 0;
     }
 
@@ -393,7 +393,7 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint32_t block_of
 
     while (data_offset < data_end && data_offset < EBPF_DATA_BUFFER_SIZE && loop_counter < LOOP_COUNTER_THRESH) {
         loop_ret = data_block_loop(context, data_offset);
-        data_offset = rocksdb_ctx->data_ctx.data_offset;
+        data_offset = rocksdb_ctx->data_ctx.offset;
 
         loop_counter++;
 
