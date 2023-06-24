@@ -319,14 +319,18 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
     struct key_size key_size;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
-    if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0)
+    if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0) {
+        bpf_printk("data_block_loop(): failed to read key sizes\n");
         return -EBPF_EINVAL;
+    }
 
     offset += bytes_read;
 
     // Read value length
-    if ((bytes_read = decode_varint32(context, offset)) == 0)
+    if ((bytes_read = decode_varint32(context, offset)) == 0) {
+        bpf_printk("data_block_loop(): failed to read value length\n");
         return -EBPF_EINVAL;
+    }
 
     offset += bytes_read;
     value_length = rocksdb_ctx->varint_ctx.varint32;
@@ -334,8 +338,10 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
     // Remove internal footer from key size
     key_size.non_shared_size -= kNumInternalBytes;
 
-    if (read_key(context, &key_size, offset) < 0)
+    if (read_key(context, &key_size, offset) < 0) {
+        bpf_printk("data_block_loop(): failed to read key\n");
         return -EBPF_EINVAL;
+    }
 
     offset += key_size.non_shared_size;
 
@@ -351,8 +357,10 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
     }
 
     // Read the sequence number and value type from the internal key footer
-    if (offset > EBPF_DATA_BUFFER_SIZE - kNumInternalBytes)
+    if (offset > EBPF_DATA_BUFFER_SIZE - kNumInternalBytes) {
+        bpf_printk("data_block_loop(): invalid offset before seqno and vt\n");
         return -EBPF_EINVAL;
+    }
 
     packed_type_seq = *(uint64_t *)(data_block + ((offset & (EBPF_DATA_BUFFER_SIZE - 1))));
     unpack_sequence_and_type(packed_type_seq, &rocksdb_ctx->data_ctx.seq, &rocksdb_ctx->data_ctx.vt);
@@ -363,8 +371,10 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
      * Offloading reading the value to a separate function led to a verifier
      * failure, so it was kept here.
      */
-    if (offset > EBPF_DATA_BUFFER_SIZE - value_length || value_length > MAX_VALUE_LEN)
+    if (offset > EBPF_DATA_BUFFER_SIZE - value_length || value_length > MAX_VALUE_LEN) {
+        bpf_printk("data_block_loop(): invalid offset before value\n");
         return -EBPF_EINVAL;
+    }
 
     for (int i = 0; i < (value_length & MAX_VALUE_LEN); i++)
         rocksdb_ctx->data_ctx.value[i] = data_block[(offset + i) & (EBPF_DATA_BUFFER_SIZE - 1)];
@@ -388,15 +398,21 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
     uint64_t data_end, offset = block_offset;
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
 
-    if (block_offset > EBPF_BLOCK_SIZE)
+    if (block_offset > EBPF_BLOCK_SIZE) {
+        bpf_printk("parse_data_block(): failed at offset > block size\n");
         return -EBPF_EINVAL;
+    }
 
     // Ensure handle.size isn't greater than the data block size
-    if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + BLOCK_FOOTER_FIXED_LEN)
+    if (rocksdb_ctx->handle.size > ROCKSDB_BLOCK_SIZE + BLOCK_FOOTER_FIXED_LEN) {
+        bpf_printk("parse_data_block(): failed at handle size > data block size\n");
         return -EBPF_EINVAL;
+    }
 
-    if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0)
+    if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0) {
+        bpf_printk("parse_data_block(): failed to read block footer\n");
         return -EBPF_EINVAL;
+    }
 
     // TODO check index type
 
@@ -425,8 +441,10 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
             break;
     }
 
-    if (loop_count >= LOOP_MAX)
+    if (loop_count >= LOOP_MAX) {
+        bpf_printk("parse_data_block(): failed due to loop overflow\n");
         return -EBPF_EINVAL;
+    }
 
     if (offset >= data_end)
         return 0; // not found
@@ -487,18 +505,24 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
     struct key_size key_size;
     uint32_t bytes_read;
 
-    if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0)
+    if ((bytes_read = read_key_sizes(context, &key_size, offset)) == 0) {
+        bpf_printk("index_block_loop(): failed to read key sizes\n");
         return -EBPF_EINVAL;
+    }
 
     offset += bytes_read;
 
-    if (read_key(context, &key_size, offset) < 0)
+    if (read_key(context, &key_size, offset) < 0) {
+        bpf_printk("index_block_loop(): failed to read key\n");
         return -EBPF_EINVAL;
+    }
 
     offset += key_size.non_shared_size & MAX_KEY_LEN;
 
-    if ((bytes_read = index_read_value(context, &key_size, offset)) == 0)
+    if ((bytes_read = index_read_value(context, &key_size, offset)) == 0) {
+        bpf_printk("index_block_loop(): failed to read value\n");
         return -EBPF_EINVAL;
+    }
 
     offset += bytes_read;
 
@@ -568,14 +592,20 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
 
     // Assuming index_value_is_delta_encoded, index_type = kBinarySearch, index_key_is_user_key
 
-    if (block_offset > EBPF_BLOCK_SIZE)
+    if (block_offset > EBPF_BLOCK_SIZE) {
+        bpf_printk("parse_index_block(): failed at offset > block size\n");
         return -EBPF_EINVAL;
+    }
 
-    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE)
+    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE) {
+        bpf_printk("parse_index_block(): failed at handle size > buffer size\n");
         return -EBPF_EINVAL;
+    }
 
-    if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0)
+    if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0) {
+        bpf_printk("parse_index_block(): failed to read block footer\n");
         return -EBPF_EINVAL;
+    }
 
     // TODO: check index type
 
@@ -608,8 +638,10 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
         offset = rocksdb_ctx->index_ctx.offset;
     }
 
-    if (loop_count >= LOOP_MAX)
+    if (loop_count >= LOOP_MAX) {
+        bpf_printk("parse_index_block(): failed due to loop overflow\n");
         return -EBPF_EINVAL;
+    }
 
     if (offset >= index_end)
         return 0; // not found
@@ -685,13 +717,16 @@ __inline uint32_t footer_read_block_handles(struct bpf_xrp *context, struct foot
     uint64_t offset = footer_offset + footer_bh_offset(footer->version);
 
     // Metaindex block-handle
-    varint_delta = read_block_handle(context, &footer->metaindex_handle, offset);
-    if (varint_delta == 0)
+    if ((varint_delta = read_block_handle(context, &footer->metaindex_handle, offset)) == 0) {
+        bpf_printk("Invalid metaindex block handle in footer\n");
         return -1;
+    }
 
     // Index block-handle
-    if (read_block_handle(context, &footer->index_handle, offset + varint_delta) == 0)
+    if (read_block_handle(context, &footer->index_handle, offset + varint_delta) == 0) {
+        bpf_printk("Invalid index block handle in footer\n");
         return -1;
+    }
 
     return 0;
 }
@@ -711,8 +746,10 @@ __noinline int parse_footer(struct bpf_xrp *context, const uint64_t footer_offse
      */
     struct footer footer = {0};
 
-    if (footer_offset < 0 || footer_offset > EBPF_DATA_BUFFER_SIZE - MAX_FOOTER_LEN)
+    if (footer_offset < 0 || footer_offset > EBPF_DATA_BUFFER_SIZE - MAX_FOOTER_LEN) {
+        bpf_printk("parse_footer(): invalid offset\n");
         return -EBPF_EINVAL;
+    }
 
     if (footer_read_metadata(context->data, &footer, footer_offset) < 0)
         return -EBPF_EINVAL;
@@ -806,5 +843,6 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
         return 0;
     }
 
+    bpf_printk("Invalid stage: %d\n", stage);
     return -EBPF_EINVAL;
 }
