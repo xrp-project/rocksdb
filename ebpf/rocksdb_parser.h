@@ -19,8 +19,6 @@
 #include <stdint.h>
 #endif
 
-#include <linux/const.h>
-
 #define PAGE_SIZE 4096
 
 // Footer member sizes
@@ -215,7 +213,10 @@ struct rocksdb_ebpf_ctx {
     struct file_array file_array;
 };
 
+// taken from <linux/const.h>
+#define __ALIGN_MASK(x, mask)	(((x) + (mask)) & ~(mask))
+
+#define ROUND_UP(x, alignment) __ALIGN_MASK(x, (typeof(x))(alignment) - 1)
 #define ROUND_DOWN(x, alignment) (((x) / (alignment)) * (alignment))
-#define ROUND_UP(x, alignment) __ALIGN_KERNEL((x), (alignment))
 
 #endif // _EBPF_ROCKSDB_PARSER_H_
