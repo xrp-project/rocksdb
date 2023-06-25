@@ -14,6 +14,5 @@ for file in "$directory"/*.sst; do
   if [ -f "$file" ]; then
     sudo ./sst-parser "$file" "$key"
     echo "$file"
-
   fi
 done
