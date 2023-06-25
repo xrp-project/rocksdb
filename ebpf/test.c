@@ -4,7 +4,6 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/mman.h>   // for madvise()
-#include <sys/param.h>  // for MAX()
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
