@@ -281,7 +281,9 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
  *     value_type and seq_no (8 bytes, packed)
  *     value (value_length bytes)
  * 
- * Returns 1 if the key is found, 0 if not, and a negative value on error.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_EQUAL if not, and a negative
+ * value on error.
+ * 
  * Stores the next offset in rocksdb_ctx->data_ctx.offset. If the value
  * is found, it's stored in rocksdb_ctx->data_ctx.value, along with the
  * sequence number and value type.
@@ -328,7 +330,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
         // TODO if block_key > user_key, user_key is not present. Exit early.
         offset += kNumInternalBytes + value_length;
         rocksdb_ctx->data_ctx.offset = offset;
-        return 0;
+        return KEY_NOT_EQUAL;
     }
 
     // Read the sequence number and value type from the internal key footer
@@ -356,14 +358,15 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     rocksdb_ctx->data_ctx.value[value_length & MAX_VALUE_LEN] = '\0';
 
-    return 1;
+    return KEY_FOUND;
 }
 
 /*
  * Iterates over all key-value pairs in a data block. Starts reading from
  * context->data + block_offset.
  * 
- * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_FOUND if not, and a negative
+ * value otherwise.
  */
 __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_offset) {
     uint8_t index_type;
@@ -410,9 +413,9 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
 
         if (loop_ret < 0)
             return loop_ret;
-        else if (loop_ret == 0)
+        else if (loop_ret == KEY_NOT_EQUAL)
             continue;
-        else if (loop_ret == 1)
+        else if (loop_ret == KEY_FOUND)
             break;
     }
 
@@ -422,9 +425,9 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
     }
 
     if (offset >= data_end)
-        return 0; // not found
+        return KEY_NOT_FOUND;
 
-    return 1;
+    return KEY_FOUND;
 }
 
 /*
@@ -471,9 +474,9 @@ __inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *siz
  *     key (non_shared_size bytes)
  *     value (block handle or delta_size (varsignedint64))
  * 
- * Returns 1 if the key is found, 0 if not, or a negative value on error.
- * Stores the next offset in rocksdb_ctx->index_ctx.offset and the block handle
- * in rocksdb_ctx->index_ctx.prev_bh.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_EQUAL if not, or a negative
+ * value on error. Stores the next offset in rocksdb_ctx->index_ctx.offset and
+ * the block handle in rocksdb_ctx->index_ctx.prev_bh.
  */
 __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
@@ -509,16 +512,17 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
      * user_key > current_key, user_key is not in the corresponding data block.
      */
     if (strncmp_key(context) > 0)
-        return 0; // not found
+        return KEY_NOT_EQUAL; // not found
 
-    return 1; // found
+    return KEY_FOUND; // found
 }
 
 /*
  * Second-level loop for index key-value pair parsing. Starts reading at
  * context->data + offset. Two nested loops allows us to bypass verifier limits.
  * 
- * Returns 1 if the key is found, 0 if not, and a negative value on error.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_EQUAL if not, and a
+ * negative value on error.
  */
 __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t index_end, uint64_t offset) {
     int loop_ret, loop_count = 0;
@@ -542,20 +546,21 @@ __noinline int parse_index_block_loop(struct bpf_xrp *context, const uint64_t in
 
         if (loop_ret < 0)
             return loop_ret;
-        else if (loop_ret == 0)
+        else if (loop_ret == KEY_NOT_EQUAL)
             continue;
-        else if (loop_ret == 1)
-            return 1;
+        else if (loop_ret == KEY_FOUND)
+            return KEY_FOUND;
     }
 
-    return 0;
+    return KEY_NOT_EQUAL;
 }
 
 /*
  * Iterates over all key-value pairs in an index block. Starts reading from
  * context->data + block_offset.
  * 
- * Returns 1 if the key is found, 0 if not, and a negative value otherwise.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_FOUND if not, and a negative
+ * value otherwise.
  */
 __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_offset) {
     uint8_t index_type;
@@ -606,11 +611,10 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
 
         if (loop_ret < 0)
             return loop_ret;
-        else if (loop_ret == 0)
+        else if (loop_ret == KEY_NOT_EQUAL)
             continue;
-        else if (loop_ret == 1)
+        else if (loop_ret == KEY_FOUND)
             break;
-
     }
 
     if (loop_count >= LOOP_MAX) {
@@ -619,11 +623,11 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
     }
 
     if (offset >= index_end)
-        return 0; // not found
+        return KEY_NOT_FOUND; // not found
 
     prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_bh, kDataStage);
 
-    return 1; // found
+    return KEY_FOUND; // found
 }
 
 /*
@@ -789,33 +793,32 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     int ret;
 
     context->fd_arr[0] = context->cur_fd;
+    rocksdb_ctx->found = 0;
 
     if (stage == kFooterStage) {
         return parse_footer(context, rocksdb_ctx->block_offset);
     } else if (stage == kIndexStage) {
-        if ((ret = parse_index_block(context, rocksdb_ctx->block_offset)) == 1) // found
+        if ((ret = parse_index_block(context, rocksdb_ctx->block_offset)) == KEY_FOUND) // found
             return 0;
         else if (ret < 0) // error
             return ret;
-
-        // Not found, go to next SST file
-        next_sst_file(context);
-
-        return 0;
+        else {
+            next_sst_file(context); // Not found, go to next SST file
+            return 0;
+        }
     } else if (stage == kDataStage) {
-        if ((ret = parse_data_block(context, rocksdb_ctx->block_offset)) == 1) { // found
+        if ((ret = parse_data_block(context, rocksdb_ctx->block_offset)) == KEY_FOUND) { // found
             rocksdb_ctx->found = 1;
             context->next_addr[0] = 0;
             context->size[0] = 0;
             context->done = true;
+            return 0;
         } else if (ret < 0) {
             return ret;
+        } else {
+            next_sst_file(context); // Not found, go to next SST file
+            return 0;
         }
-
-        // Not found, go to next SST file
-        next_sst_file(context);
-
-        return 0;
     }
 
     bpf_printk("Invalid stage: %d\n", stage);

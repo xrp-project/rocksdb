@@ -21,6 +21,13 @@
 #define memset(dest, value, n) __builtin_memset((dest), (value), (n))
 #define memcmp(s1, s2, n) __builtin_memcmp((s1), (s2), (n))
 
+// Key found status
+enum key_state {
+    KEY_FOUND = 0x0,
+    KEY_NOT_EQUAL = 0x1, // May exist elsewhere, keep searching
+    KEY_NOT_FOUND = 0x2, // Does not exist in this SST file, stop searching
+};
+
 // Varint code
 #define VARINT_SHIFT ((unsigned int) 7)
 #define VARINT_MSB ((unsigned int) (1 << (VARINT_SHIFT))) // 128 == 0x80
