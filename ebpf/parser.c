@@ -281,8 +281,8 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
  *     value_type and seq_no (8 bytes, packed)
  *     value (value_length bytes)
  * 
- * Returns KEY_FOUND if the key is found, KEY_NOT_EQUAL if not, and a negative
- * value on error.
+ * Returns KEY_FOUND if the key is found, KEY_NOT_EQUAL or KEY_NOT_FOUND if not,
+ * and a negative value on error.
  * 
  * Stores the next offset in rocksdb_ctx->data_ctx.offset. If the value
  * is found, it's stored in rocksdb_ctx->data_ctx.value, along with the
@@ -291,6 +291,7 @@ __inline void prep_next_stage(struct bpf_xrp *context, struct block_handle *bh, 
 __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
     uint8_t *data_block = context->data;
     uint32_t bytes_read;
+    int ret;
     volatile uint32_t value_length;
     uint64_t packed_type_seq;
     struct key_size key_size;
@@ -326,11 +327,12 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
      * Key not equal - increment past internal footer and value and move to next
      * iteration.
      */ 
-    if (strncmp_key(context) != 0) {
-        // TODO if block_key > user_key, user_key is not present. Exit early.
+    if ((ret = strncmp_key(context)) != 0) {
         offset += kNumInternalBytes + value_length;
         rocksdb_ctx->data_ctx.offset = offset;
-        return KEY_NOT_EQUAL;
+
+        // ret < 0 => user_key < block_key => user_key not present. Exit early.
+        return (ret < 0) ? KEY_NOT_FOUND : KEY_NOT_EQUAL;
     }
 
     // Read the sequence number and value type from the internal key footer
@@ -344,7 +346,7 @@ __noinline int data_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     offset += kNumInternalBytes;
 
-    /* 
+    /*
      * Offloading reading the value to a separate function led to a verifier
      * failure, so it was kept here.
      */
@@ -411,12 +413,12 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
         offset = rocksdb_ctx->data_ctx.offset;
         loop_count++;
 
-        if (loop_ret < 0)
-            return loop_ret;
+        if (loop_ret == KEY_FOUND)
+            break;
         else if (loop_ret == KEY_NOT_EQUAL)
             continue;
-        else if (loop_ret == KEY_FOUND)
-            break;
+        else
+            return loop_ret; // KEY_NOT_FOUND or error
     }
 
     if (loop_count >= LOOP_MAX) {
