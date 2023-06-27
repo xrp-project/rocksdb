@@ -444,12 +444,12 @@ __noinline int parse_data_block(struct bpf_xrp *context, const uint64_t block_of
  * 
  * Returns bytes read on success, or 0 on failure.
  */
-__inline uint32_t index_read_value(struct bpf_xrp *context, struct key_size *sizes, uint64_t offset) {
+__noinline uint32_t index_read_value(struct bpf_xrp *context, uint32_t shared_size, uint64_t offset) {
     struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
     struct block_handle *prev_bh = &rocksdb_ctx->index_ctx.prev_bh;
     uint32_t bytes_read;
 
-    if (sizes->shared_size == 0) {
+    if (shared_size == 0) {
         if ((bytes_read = read_block_handle(context, prev_bh, offset)) == 0)
             return 0;
     } else {
@@ -499,7 +499,7 @@ __noinline int index_block_loop(struct bpf_xrp *context, uint64_t offset) {
 
     offset += key_size.non_shared_size & MAX_KEY_LEN;
 
-    if ((bytes_read = index_read_value(context, &key_size, offset)) == 0) {
+    if ((bytes_read = index_read_value(context, key_size.shared_size, offset)) == 0) {
         bpf_printk("index_block_loop(): failed to read value\n");
         return -EBPF_EINVAL;
     }
@@ -630,6 +630,131 @@ __noinline int parse_index_block(struct bpf_xrp *context, const uint64_t block_o
     prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_bh, kDataStage);
 
     return KEY_FOUND; // found
+}
+
+__noinline int64_t parse_index_block_binary_loop(struct bpf_xrp *context, int64_t left, int64_t right, uint64_t index_end, uint64_t block_offset) {
+    struct key_size key_size;
+    uint32_t bytes_read, restart_offset;
+    int64_t mid = left + (right - left + 1) / 2;
+    uint32_t restart_array_offset = index_end + mid * sizeof(uint32_t);
+
+    if (restart_array_offset > EBPF_DATA_BUFFER_SIZE - sizeof(uint32_t)) {
+        bpf_printk("parse_index_block_binary(): invalid restart array offset\n");
+        return -EBPF_EINVAL;
+    }
+
+    restart_offset = *(uint32_t *)(context->data + restart_array_offset);
+
+    if ((bytes_read = read_key_sizes(context, &key_size, block_offset + restart_offset)) == 0) {
+        bpf_printk("parse_index_block_binary(): failed to read key sizes\n");
+        return -EBPF_EINVAL;
+    }
+
+    restart_offset += bytes_read;
+
+    if (read_key(context, &key_size, block_offset + restart_offset) < 0) {
+        bpf_printk("parse_index_block_binary(): failed to read key\n");
+        return -EBPF_EINVAL;
+    }
+
+    return mid;
+}
+
+__noinline int parse_index_block_binary(struct bpf_xrp *context, const uint64_t block_offset) {
+    uint8_t index_type;
+    int loop_ret, loop_count = 0;
+    //const int LOOP_MAX = 2000;
+    uint32_t num_restarts, restart_array_offset, restart_offset;
+    uint64_t index_end, max_offset; //, offset = block_offset;
+    int64_t left, right;
+    struct rocksdb_ebpf_ctx *rocksdb_ctx = (struct rocksdb_ebpf_ctx *)context->scratch;
+
+    // Assuming index_value_is_delta_encoded, index_type = kBinarySearch, index_key_is_user_key
+
+    if (block_offset > EBPF_BLOCK_SIZE) {
+        bpf_printk("parse_index_block(): failed at offset > block size\n");
+        return -EBPF_EINVAL;
+    }
+
+    if (rocksdb_ctx->handle.size > EBPF_DATA_BUFFER_SIZE) {
+        bpf_printk("parse_index_block(): failed at handle size > buffer size\n");
+        return -EBPF_EINVAL;
+    }
+
+    if (read_block_footer(context, block_offset, &index_type, &num_restarts) < 0) {
+        bpf_printk("parse_index_block(): failed to read block footer\n");
+        return -EBPF_EINVAL;
+    }
+
+    // TODO: check index type
+
+    index_end = block_data_end(block_offset, rocksdb_ctx->handle.size, num_restarts);
+
+    left = -1;
+    right = num_restarts - 1;
+    uint32_t index;
+
+    while (left != right && loop_count < 50) {
+        // Restart indices are uint32_t
+        int ret;
+        int64_t mid;
+
+        loop_count++;
+
+        if ((mid = parse_index_block_binary_loop(context, left, right, index_end, block_offset)) == -EBPF_EINVAL)
+            return -EBPF_EINVAL;
+
+        ret = strncmp_key(context);
+
+        if (ret > 0) { // restart[mid] < target. All keys before mid are boring.
+            left = mid;
+        } else if (ret < 0) { // restart[mid] > target. All keys after and including mid are boring.
+            right = mid - 1; 
+        } else { // restart[mid] == target. This is the desired key.
+            left = right = mid;
+        }
+    }
+
+    if (loop_count >= 50) {
+        bpf_printk("loop overflow binary\n");
+        return -EBPF_EINVAL;
+    }
+    
+    if (left == -1) // All keys in block > target, take the first key
+        index = 0;
+    else
+        index = (uint32_t)left;
+
+    restart_array_offset = index_end + index * sizeof(uint32_t);
+
+    if (restart_array_offset > EBPF_DATA_BUFFER_SIZE - sizeof(uint32_t)) {
+        bpf_printk("parse_index_block_binary(): invalid restart array offset\n");
+        return -EBPF_EINVAL;
+    }
+
+    restart_offset = *(uint32_t *)(context->data + restart_array_offset);
+
+    if (index + 2 < num_restarts) { // We are in a non-last restart interval
+        // Need to do +2 so parse_index_block_loop() can check the start of the next restart interval
+        restart_array_offset = index_end + (index + 2) * sizeof(uint32_t);
+
+        if (restart_array_offset > EBPF_DATA_BUFFER_SIZE - sizeof(uint32_t)) {
+            bpf_printk("parse_index_block_binary(): invalid restart array offset\n");
+            return -EBPF_EINVAL;
+        }
+
+        max_offset = block_offset + *(uint32_t *)(context->data + restart_array_offset);
+    } else {
+        // We are in the last restart interval
+        max_offset = index_end;
+    }
+
+    loop_ret = parse_index_block_loop(context, max_offset, block_offset + restart_offset);
+
+    if (loop_ret == KEY_FOUND)
+        prep_next_stage(context, &rocksdb_ctx->index_ctx.prev_bh, kDataStage);
+
+    return loop_ret;
 }
 
 /*
@@ -800,8 +925,12 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
     if (stage == kFooterStage) {
         return parse_footer(context, rocksdb_ctx->block_offset);
     } else if (stage == kIndexStage) {
-        if ((ret = parse_index_block(context, rocksdb_ctx->block_offset)) == KEY_FOUND) // found
+        uint64_t start = bpf_ktime_get_ns();
+        if ((ret = parse_index_block_binary(context, rocksdb_ctx->block_offset)) == KEY_FOUND) { // found
+            uint64_t end = bpf_ktime_get_ns();
+            bpf_printk("index elapsed: %lu\n", end - start);
             return 0;
+        }
         else if (ret < 0) // error
             return ret;
         else {
@@ -809,7 +938,10 @@ __u32 rocksdb_lookup(struct bpf_xrp *context) {
             return 0;
         }
     } else if (stage == kDataStage) {
+        uint64_t start = bpf_ktime_get_ns();
         if ((ret = parse_data_block(context, rocksdb_ctx->block_offset)) == KEY_FOUND) { // found
+            uint64_t end = bpf_ktime_get_ns();
+            bpf_printk("data elapsed: %lu\n", end - start);
             rocksdb_ctx->found = 1;
             context->next_addr[0] = 0;
             context->size[0] = 0;
