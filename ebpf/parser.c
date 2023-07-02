@@ -778,7 +778,7 @@ __noinline int next_sst_file(struct bpf_xrp *context) {
     data_size = rocksdb_ctx->block_offset + rocksdb_ctx->handle.size + kBlockTrailerSize;
     context->fd_arr[0] = file_array[curr_idx].fd;
     context->next_addr[0] = ROUND_DOWN(file_array[curr_idx].offset, EBPF_BLOCK_SIZE);
-    context->size[0] = ROUND_UP(data_size, PAGE_SIZE);
+    context->size[0] = ROUND_UP(data_size, EBPF_BLOCK_SIZE);
     context->done = false;
 
     return 0;
