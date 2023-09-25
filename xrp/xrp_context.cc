@@ -22,30 +22,31 @@
 namespace ROCKSDB_NAMESPACE {
 
 void handleCompaction(int sec) {
+    const std::string LOG_PREFIX = "[ADAPTIVE] ";
+
     const char* adapt = getenv("XRP_ADAPTIVE_RATE");
-    if (adapt == nullptr) {
+    if (!adapt) {
+        return;
+    }
+
+    const char* old_rate = getenv("XRP_SAMPLE_RATE");
+    if (!old_rate) {
+        std::cerr << LOG_PREFIX << "XRP_SAMPLE_RATE environment variable not found." << std::endl;
+        return;
+    }
+
+    std::cerr << LOG_PREFIX << "Setting sample rate to 1." << std::endl;
+    
+    if (setenv("XRP_SAMPLE_RATE", "1", 1) != 0) {
+        std::cerr << LOG_PREFIX << "Failed to set XRP_SAMPLE_RATE." << std::endl;
         return;
     }
     
-    /*
-    const char* old_rate = getenv("XRP_SAMPLE_RATE");
-
-    if (old_rate == nullptr) {
-        std::cerr << "XRP_SAMPLE_RATE environment variable not found." << std::endl;
-        putenv((char *) "XRP_SAMPLE_RATE=10");
-        return;
-    }
-    */
-
-    std::cerr << "Setting sample rate to 1" << std::endl;
-
-    putenv((char *)"XRP_SAMPLE_RATE=1");
     std::this_thread::sleep_for(std::chrono::seconds(sec));
 
-    std::cerr << "Setting sample rate to 10" << std::endl;
-
-    //std::string restore_rate = "XRP_SAMPLE_RATE=" + std::string(old_rate);
-    putenv((char *)"XRP_SAMPLE_RATE=10");
+    if (setenv("XRP_SAMPLE_RATE", old_rate, 1) != 0) {
+        std::cerr << LOG_PREFIX << "Failed to restore XRP_SAMPLE_RATE." << std::endl;
+    }
 }
 
 XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): is_bpfof(_is_bpfof) {
