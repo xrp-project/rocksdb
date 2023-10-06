@@ -4390,6 +4390,11 @@ void rocksdb_readoptions_set_snapshot(
   opt->rep.snapshot = (snap ? snap->rep : nullptr);
 }
 
+void rocksdb_readoptions_set_force_sample(
+    rocksdb_readoptions_t* opt, unsigned char v) {
+  opt->rep.force_sample = v;
+}
+
 void rocksdb_readoptions_set_iterate_upper_bound(
     rocksdb_readoptions_t* opt,
     const char* key, size_t keylen) {

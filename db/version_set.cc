@@ -2292,16 +2292,27 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
   
+
+  // if TRUE, user has specified to use vanilla RocksDB read path
+  bool sample = read_options.force_sample;
+
+  // TEMP: print when forcing sampling
+  if (sample) {
+    std::cout << "Key failed, forcing sampling" << std::endl;
+  }
+
   xrp->Reset();
 
-  bool sample;
-  uint32_t sample_rate = xrp->GetSampleRate(); 
-  if (sample_rate == 0) {
-    sample = false;
-  } else if (sample_rate == 1) {
-    sample = true;
-  } else {
-    sample = Random::GetTLSInstance()->OneIn(sample_rate); 
+  if (!sample) {
+    uint32_t sample_rate = xrp->GetSampleRate(); 
+    
+    if (sample_rate == 0) {
+      sample = false;
+    } else if (sample_rate == 1) {
+      sample = true;
+    } else {
+      sample = Random::GetTLSInstance()->OneIn(sample_rate); 
+    }
   }
 
   Slice *s; // value will be stored in slice
@@ -2359,7 +2370,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
       // only look in cache. we don't care about status
       *status = bbt->CacheGet(ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), skip_filters, &xrp_file);
     }
-    
+
     if (get_context.State() == GetContext::kFound 
       || get_context.State() == GetContext::kDeleted 
       || get_context.State() == GetContext::kCorrupt) {
@@ -2475,19 +2486,9 @@ get_out:
     if (LIKELY(value != nullptr)) {
       value->PinSelf();
     }
-  } else {
-    // key does not exist, so resubmit with normal read path 
-    if (sample || bbt == nullptr) {
-      *status = Status::NotFound();
-      goto exit;
-    }
-
-    sample = true; // ensure NotFound if key actually doesn't exist
-    *status = bbt->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), false /* skip filters */);
-
-    //std::cerr << "XRP Failed: Read fallback to RocksDB read path" << std::endl;
-    goto get_out;
   }
+
+  *status = Status::NotFound();
 
 exit:
   if (handle != nullptr) {

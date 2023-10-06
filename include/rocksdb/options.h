@@ -1700,6 +1700,11 @@ struct ReadOptions {
   // Default: true
   bool optimize_multiget_for_io;
 
+  // XRP: Forces a RocksDB "sample" for the read. Reads will go through
+  // the vanilla read path if set to true.
+  // Default: false
+  bool force_sample;
+
   ReadOptions();
   ReadOptions(bool cksum, bool cache);
 };
