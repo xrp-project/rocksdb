@@ -2297,11 +2297,9 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   bool sample = read_options.force_sample;
 
   // TEMP: print when forcing sampling
-  if (sample) {
-    std::cout << "Key failed, forcing sampling" << std::endl;
-  }
-
-  xrp->Reset();
+  //if (sample) {
+  //  std::cout << "Key failed, forcing sampling" << std::endl;
+  //}
 
   if (!sample) {
     uint32_t sample_rate = xrp->GetSampleRate(); 
@@ -2313,6 +2311,10 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     } else {
       sample = Random::GetTLSInstance()->OneIn(sample_rate); 
     }
+  }
+
+  if (!sample) {
+    xrp->Reset();
   }
 
   Slice *s; // value will be stored in slice
@@ -2372,8 +2374,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     }
 
     if (get_context.State() == GetContext::kFound 
-      || get_context.State() == GetContext::kDeleted 
-      || get_context.State() == GetContext::kCorrupt) {
+      || get_context.State() == GetContext::kDeleted) {
       goto get_out;
     }
 
