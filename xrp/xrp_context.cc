@@ -21,32 +21,29 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-void handleCompaction(int sec) {
-    const std::string LOG_PREFIX = "[ADAPTIVE] ";
-
+void handleCompaction() {
     const char* adapt = getenv("XRP_ADAPTIVE_RATE");
     if (!adapt) {
         return;
     }
 
-    const char* old_rate = getenv("XRP_SAMPLE_RATE");
-    if (!old_rate) {
-        std::cerr << LOG_PREFIX << "XRP_SAMPLE_RATE environment variable not found." << std::endl;
+    int sec;
+    try {
+        sec = std::stoi(adapt);
+    } catch (const std::invalid_argument& ex) {
+        std::cerr << "Error: invalid argument for XRP_ADAPTIVE_RATE: " << ex.what() << std::endl;
         return;
     }
 
-    std::cerr << LOG_PREFIX << "Setting sample rate to 1." << std::endl;
-    
-    if (setenv("XRP_SAMPLE_RATE", "1", 1) != 0) {
-        std::cerr << LOG_PREFIX << "Failed to set XRP_SAMPLE_RATE." << std::endl;
-        return;
-    }
-    
+    std::cerr << "[ADAPTIVE] Running sampling for " << sec << "sec" << std::endl;
+
+
+    this->force_sample = true;
     std::this_thread::sleep_for(std::chrono::seconds(sec));
+    this->force_sample = false;
 
-    if (setenv("XRP_SAMPLE_RATE", old_rate, 1) != 0) {
-        std::cerr << LOG_PREFIX << "Failed to restore XRP_SAMPLE_RATE." << std::endl;
-    }
+    std::cerr << "[ADAPTIVE] Done with adaptive sampling" << std::endl;
+
 }
 
 XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): is_bpfof(_is_bpfof) {
@@ -72,6 +69,8 @@ XRPContext::XRPContext(const std::string &ebpf_program, const bool _is_bpfof): i
 
     memset(scratch_buf, 0, EBPF_SCRATCH_BUFFER_SIZE);
     ctx = reinterpret_cast<struct rocksdb_ebpf_ctx *>(scratch_buf);
+
+    force_sample = false;
 }
 
 XRPContext::~XRPContext() {
@@ -204,10 +203,14 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
 }
 
 uint32_t XRPContext::GetSampleRate() {
-    // random default sample rate
-    uint32_t rate = 100;
+    // default sample rate
+    uint32_t rate = 10;
 
-    const char* sample_var = std::getenv("XRP_SAMPLE_RATE"); 
+    if (this->force_sample) {
+        return 1; // force sampling
+    }
+
+    const char* sample_var = std::getenv("XRP_SAMPLE_RATE");
     if (sample_var != nullptr) {
         try {
             rate = std::stoi(sample_var);

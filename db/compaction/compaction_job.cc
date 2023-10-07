@@ -936,8 +936,8 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
 
   CleanupCompaction();
 
-  std::cerr << "compaction happening!" << std::endl;
-  std::thread t(handleCompaction, 20);
+  std::cerr << "Compaction happening!" << std::endl;
+  std::thread t(handleCompaction);
   t.detach();
   
   return status;
