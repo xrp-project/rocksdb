@@ -28,7 +28,6 @@ class XRPContext {
 
     int bpf_fd;
     bool is_bpfof;
-    atomic_bool force_sample;
     uint8_t *data_buf;
     uint8_t *scratch_buf;
     const size_t huge_page_size = 1 << 21;

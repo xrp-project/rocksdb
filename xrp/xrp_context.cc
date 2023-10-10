@@ -20,6 +20,8 @@
 #include "xrp_context.h"
 
 namespace ROCKSDB_NAMESPACE {
+    
+std::atomic_bool force_sample(false); 
 
 void handleCompaction() {
     const char* adapt = getenv("XRP_ADAPTIVE_RATE");
@@ -38,9 +40,9 @@ void handleCompaction() {
     std::cerr << "[ADAPTIVE] Running sampling for " << sec << "sec" << std::endl;
 
 
-    this->force_sample = true;
+    force_sample = true;
     std::this_thread::sleep_for(std::chrono::seconds(sec));
-    this->force_sample = false;
+    force_sample = false;
 
     std::cerr << "[ADAPTIVE] Done with adaptive sampling" << std::endl;
 
@@ -206,7 +208,7 @@ uint32_t XRPContext::GetSampleRate() {
     // default sample rate
     uint32_t rate = 10;
 
-    if (this->force_sample) {
+    if (force_sample) {
         return 1; // force sampling
     }
 
