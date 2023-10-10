@@ -20,8 +20,8 @@
 #include "xrp_context.h"
 
 namespace ROCKSDB_NAMESPACE {
-    
-std::atomic_bool force_sample(false); 
+
+std::atomic_bool force_sample(false);
 
 void handleCompaction() {
     const char* adapt = getenv("XRP_ADAPTIVE_RATE");
@@ -121,7 +121,17 @@ Status XRPContext::Get(const Slice &key, Slice &value, ParsedInternalKey *intern
         request_size = 4096;
     }
 
-    long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, request_size, start_file.offset, bpf_fd, scratch_buf);
+    // long ret = syscall(SYS_READ_XRP, start_file.fd, data_buf, request_size, start_file.offset, bpf_fd, scratch_buf);
+
+    // Create file descriptor array
+    if (ctx->file_count > 10) {
+        std::cout << "Error! File count > 10!" << std::endl;
+        return Status::InvalidArgument();
+    }
+    unsigned int fds[ctx->file_count];
+    for (int i = 0; i < ctx->file_count; i++) fds[i] = ctx->file_array[i].fd;
+    long ret = syscall(SYS_READ_BPFOF, fds, ctx->file_count, request_size,
+        start_file.offset, scratch_buf, 4096);
 
     if (ret < 0)
         s = Status::Corruption();

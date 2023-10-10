@@ -26,6 +26,7 @@
 #define ROCKSDB_BLOCK_SIZE 4096
 
 #define SYS_READ_XRP 445
+#define SYS_READ_BPFOF 447
 
 #define EBPF_EINVAL 22
 
