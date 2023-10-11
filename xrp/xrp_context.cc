@@ -96,7 +96,7 @@ int XRPContext::load_bpf_program(const char *path) {
     return progfd;
 }
 
-Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched) {
+Status XRPContext::Get(const Slice &key, Slice &value, ParsedInternalKey *internal_key, bool *matched) {
     Status s = Status::OK();
     uint32_t request_size;
 
@@ -128,14 +128,18 @@ Status XRPContext::Get(const Slice &key, Slice &value, GetContext *get_context, 
 
     if (ctx->found == 1) {
         ValueType v = static_cast<ValueType>(ctx->data_ctx.vt);
-        ParsedInternalKey internal_key = ParsedInternalKey(key, ctx->data_ctx.seq, v);
+        *internal_key = ParsedInternalKey(key, ctx->data_ctx.seq, v);
 
         if (v == kTypeValue) {
             const char *ptr = reinterpret_cast<const char *>(ctx->data_ctx.value);
             value.data_ = ptr;
             value.size_ = strlen(ptr);
         }
-        get_context->SaveValue(internal_key, value, matched);
+        
+        *matched = true;
+        
+        // from before changes that require doing this in version_set.cc 
+        // get_context->SaveValue(internal_key, value, matched);
     }
 
     return s;

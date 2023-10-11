@@ -18,7 +18,7 @@ class XRPContext {
     XRPContext(const std::string &ebpf_program, const bool is_bpfof);
     ~XRPContext();
 
-    Status Get(const Slice &key, Slice &value, GetContext *get_context, bool *matched);
+    Status Get(const Slice &key, Slice &value, ParsedInternalKey *internal_key, bool *matched);
     void Reset(void);
     void AddFile(const BlockBasedTable &sst, struct file_context &input_file);
     uint32_t GetSampleRate();

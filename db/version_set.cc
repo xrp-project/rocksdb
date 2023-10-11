@@ -2317,9 +2317,11 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     xrp->Reset();
   }
 
-  Slice *s; // value will be stored in slice
+  Slice *slice; // value will be stored in slice
   BlockBasedTable *bbt = nullptr; 
   Cache::Handle* handle = nullptr;
+
+  bool matched = false;
 
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
@@ -2375,7 +2377,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
     if (get_context.State() == GetContext::kFound 
       || get_context.State() == GetContext::kDeleted) {
-      goto get_out;
+      break;
     }
 
     // if using XRP, add to XRP file array
@@ -2387,13 +2389,18 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
 
   // if using XRP, make the request
   if (!sample) {
-    s = dynamic_cast<Slice *>(value);
-    bool matched;
+    slice = dynamic_cast<Slice *>(value);
+    ParsedInternalKey internal_key;
 
-    *status = xrp->Get(user_key, *s, &get_context, &matched);
+    Status xrp_status = xrp->Get(user_key, *slice, &internal_key, &matched);
+
+    if (matched) {
+      get_context.SaveValue(internal_key, *slice, &matched);
+      *status = xrp_status;
+    }
+    
   }
 
-get_out:
   if (!status->ok()) {
     if (db_statistics_ != nullptr) {
       get_context.ReportCounters();
