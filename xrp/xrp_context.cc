@@ -133,8 +133,11 @@ Status XRPContext::Get(const Slice &key, Slice &value, ParsedInternalKey *intern
     long ret = syscall(SYS_READ_BPFOF, fds, ctx->file_count, request_size,
         start_file.offset, scratch_buf, 4096);
 
-    if (ret < 0)
+
+    if (ret < 0){
         s = Status::Corruption();
+        // std::cout << "syscall return code: " << ret << std::endl;
+    }
 
     if (ctx->found == 1) {
         ValueType v = static_cast<ValueType>(ctx->data_ctx.vt);
