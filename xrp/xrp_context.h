@@ -22,6 +22,7 @@ class XRPContext {
     void Reset(void);
     void AddFile(const BlockBasedTable &sst, struct file_context &input_file);
     uint32_t GetSampleRate();
+    uint32_t GetFileCount();
 
    private:
     int load_bpf_program(const char *path);

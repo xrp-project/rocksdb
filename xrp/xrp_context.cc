@@ -135,7 +135,7 @@ Status XRPContext::Get(const Slice &key, Slice &value, ParsedInternalKey *intern
             value.data_ = ptr;
             value.size_ = strlen(ptr);
         }
-        
+
         *matched = true;
         
         // from before changes that require doing this in version_set.cc 
@@ -206,6 +206,11 @@ void XRPContext::AddFile(const BlockBasedTable &sst, struct file_context &cache_
     std::cout << "bytes_to_read: " << file_ctx->bytes_to_read << std::endl;
     std::cout << "offset: " << file_ctx->offset << std::endl;
 */
+}
+
+// 
+uint32_t XRPContext::GetFileCount() {
+    return ctx->file_count;
 }
 
 uint32_t XRPContext::GetSampleRate() {

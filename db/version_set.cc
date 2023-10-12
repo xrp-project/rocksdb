@@ -2322,6 +2322,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
   Cache::Handle* handle = nullptr;
 
   bool matched = false;
+  BlockBasedTable* singleFileTable = nullptr;
 
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
@@ -2381,26 +2382,55 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     }
 
     // if using XRP, add to XRP file array
-    if (!sample)
+    if (!sample) {
       xrp->AddFile(*bbt, xrp_file);
+
+      // update single file table if we only have one file
+      // fd of -1 means the file should be skipped, because of legacy hack
+      if (xrp->GetFileCount() <= 1 && xrp_file.fd != (uint32_t)-1) {
+        singleFileTable = bbt;
+      }
+    }
 
     f = fp.GetNextFile();
   }
 
   // if using XRP, make the request
   if (!sample) {
+    // we don't have any files to search with XRP, so take whatever we got from cache
+    if (xrp->GetFileCount() == 0) {
+      goto done_lookup;
+    }
+
+    // we only have one file to search, so do it with RocksDB as optimization 
+    else if (xrp->GetFileCount() == 1) {
+      assert(singleFileTable != nullptr); // if this fails, things are broken
+      
+      *status = singleFileTable->Get(read_options, ikey, &get_context, mutable_cf_options_.prefix_extractor.get(), true);
+      goto done_lookup;
+    }
+
+    // we have multi-file. Run BPFoF
     slice = dynamic_cast<Slice *>(value);
     ParsedInternalKey internal_key;
 
     Status xrp_status = xrp->Get(user_key, *slice, &internal_key, &matched);
 
+    // matched set by xrp-Get() call. If matched, we have a value from BPFoF 
+    // that is more recent than cached version
     if (matched) {
+      // update get_context based on key found in BPFoF
       get_context.SaveValue(internal_key, *slice, &matched);
+      // set status to 
       *status = xrp_status;
     }
-    
+
+    // if we don't find the key with XRP, the cached lookup is the latest key.
+    // keep the old status and get_context
+
   }
 
+done_lookup:
   if (!status->ok()) {
     if (db_statistics_ != nullptr) {
       get_context.ReportCounters();
